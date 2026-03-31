@@ -2,7 +2,7 @@
 <div align="center">
 
 
-# <img src="assets/logo.png" width="40" style="vertical-align: -20%; margin-right: -5px;"> GEMS: Agent-Native Multimodal Generation with Memory and Skills
+# <img src="assets/logo.png" width="40" style="vertical-align: -25%; margin-right: -5px;"> GEMS: Agent-Native Multimodal Generation with Memory and Skills
 
 <a href="https://arxiv.org/abs/2603.XXXXX"><img src="https://img.shields.io/badge/arXiv-paper-b31b1b?logo=arxiv&logoColor=white" alt="Paper"></a>&nbsp;&nbsp;<a href="https://gems-gen.github.io"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20Project-Page-2563eb" alt="Project Page"></a>&nbsp;&nbsp;<a href=""><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Paper-ffc107" alt="Paper"></a>
 
