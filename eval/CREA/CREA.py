@@ -15,8 +15,8 @@ parser.add_argument("--n_samples", type=int, default=25)  # following the paper 
 args = parser.parse_args()
 
 NUM_WORKERS = 256
-DATA_PATH = "/mnt/shared-storage-user/hezefeng/0project/MMGenAgent/eval/CREA/data.jsonl"
-OUTPUT_DIR = os.path.join("/mnt/shared-storage-user/hezefeng/0project/MMGenAgent/eval/CREA/results", args.name)
+DATA_PATH = "eval/CREA/data.jsonl"
+OUTPUT_DIR = os.path.join("eval/CREA/results", args.name)
 MAPPING_FILE = os.path.join(OUTPUT_DIR, "image_paths.json")
 gen_url = "" 
 mllm_url = ""
