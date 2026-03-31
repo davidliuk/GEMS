@@ -1,0 +1,14 @@
+# Checkpoints and large files
+checkpoints/
+checkpoints_v7/
+*.ckpt
+*.pth
+test_datasets/AVA/images/
+test_datasets/FLICKR-AES/images/
+test_datasets/PARA/images/
+test_datasets/TAD66K/images/
+
+# others
+**/__pycache__/
+*.py[cod]
+results/
