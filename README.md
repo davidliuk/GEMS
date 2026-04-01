@@ -81,8 +81,30 @@ python eval/GenEval2.py
 We provide full evaluation code for **CREA** and **ArtiMuse**. For other tasks, evaluations are conducted strictly following their official settings.
 
 
-### Skill
-Skills are summarized from previous works. You can also add your own by referring to `agent/skills`.
+### Skills
+![Skill](assets/skill_demo.png)
+
+Our Skills are summarized from previous works and tested on downstream tasks. You can also add your own by referring to `agent/skills`.
+
+Each skill should be organized as follows:
+
+```text
+agent/skills/
+└── <skill_id>/             # Unique folder name (used as Skill ID)
+    └── SKILL.md            # Skill definition file
+```
+The `SkillManager` parses `SKILL.md` using regular expressions. To ensure your skill is recognized correctly, please follow this template:
+
+```markdown
+# Skill: <Name>
+
+## Description
+Provide a concise summary of what this skill does. 
+
+## Instructions
+Provide detailed domain-specific guidance, prompts, or constraints here. 
+The code will capture all content remaining below this header.
+```
 
 ### Citation
 If you find our work useful, please consider citing:
