@@ -259,6 +259,7 @@ class TestErrorHandling:
             "error": "ComfyUI execution error: Float8_e4m3fn MPS issue"
         }
         cfg.max_iterations = 1
+        cfg.max_repair_attempts = 0          # disable repairs for this test
         h = _make_harness(minimal_workflow, cfg, client=mock_client)
         h.run("test")
         assert len(h.memory) == 1
@@ -269,9 +270,154 @@ class TestErrorHandling:
         mock_client = MagicMock()
         mock_client.queue_prompt.side_effect = Exception("Connection refused")
         cfg.max_iterations = 1
+        cfg.max_repair_attempts = 0          # disable repairs for this test
         h = _make_harness(minimal_workflow, cfg, client=mock_client)
         result = h.run("test")
         assert result is None  # no image produced, but no crash
+
+
+# ---------------------------------------------------------------------------
+# Repair loop
+# ---------------------------------------------------------------------------
+
+class TestRepairLoop:
+    def test_queue_error_triggers_agent_repair(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
+        """When queue_prompt raises on the first attempt the agent should be
+        called a second time (repair round 1) before the iteration is abandoned."""
+        mock_client = MagicMock()
+        # First call raises, second call succeeds (repair accepted)
+        mock_client.queue_prompt.side_effect = [
+            Exception("HTTP 400: bad node"),
+            {"prompt_id": "pid-repaired"},
+        ]
+        mock_client.wait_for_completion.return_value = {"outputs": {}}
+        mock_client.collect_images.return_value = []
+
+        cfg.max_iterations = 1
+        cfg.max_repair_attempts = 1
+        mock_agent = _mock_agent()
+        h = _make_harness(minimal_workflow, cfg, agent=mock_agent, client=mock_client)
+        h.run("test")
+
+        # Agent called twice: once for the normal evolution, once for the repair
+        assert mock_agent.plan_and_patch.call_count == 2
+
+    def test_repair_feedback_contains_error_message(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
+        """The feedback given to the agent during repair must include the
+        exact error message returned by ComfyUI."""
+        received_feedbacks: list[str] = []
+
+        def capture_patch(workflow_manager, verifier_feedback=None, **kwargs):
+            if verifier_feedback is not None:
+                received_feedbacks.append(verifier_feedback)
+            return "rationale"
+
+        mock_client = MagicMock()
+        mock_client.queue_prompt.side_effect = [
+            Exception("return_type_mismatch: vae slot wrong"),
+            {"prompt_id": "pid"},
+        ]
+        mock_client.wait_for_completion.return_value = {"outputs": {}}
+        mock_client.collect_images.return_value = []
+
+        cfg.max_iterations = 1
+        cfg.max_repair_attempts = 1
+        mock_agent = MagicMock()
+        mock_agent.plan_and_patch.side_effect = capture_patch
+        h = _make_harness(minimal_workflow, cfg, agent=mock_agent, client=mock_client)
+        h.run("test")
+
+        # At least one feedback must contain the error string
+        assert any("return_type_mismatch" in fb for fb in received_feedbacks)
+        assert any("Repair Required" in fb for fb in received_feedbacks)
+
+    def test_repair_exhausted_records_error(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
+        """If all repair attempts also fail, the iteration should be abandoned
+        and the error recorded in memory without crashing."""
+        mock_client = MagicMock()
+        mock_client.queue_prompt.side_effect = Exception("persistent error")
+
+        cfg.max_iterations = 1
+        cfg.max_repair_attempts = 2
+        h = _make_harness(minimal_workflow, cfg, client=mock_client)
+        result = h.run("test")
+
+        assert result is None
+        assert len(h.memory) == 1
+        assert "persistent error" in h.memory.attempts[0].failed[0]
+        # Agent called 1 (normal) + 2 (repairs) = 3 times
+        assert h._agent.plan_and_patch.call_count == 3
+
+    def test_repair_success_produces_image(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
+        """A successful repair should result in a verified image being returned."""
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+
+        mock_client = MagicMock()
+        mock_client.queue_prompt.side_effect = [
+            Exception("HTTP 400"),
+            {"prompt_id": "pid-ok"},
+        ]
+        mock_client.wait_for_completion.return_value = {
+            "outputs": {"7": {"images": [{"filename": "t.png", "subfolder": "", "type": "output"}]}}
+        }
+        mock_client.collect_images.return_value = [png]
+
+        cfg.max_iterations = 1
+        cfg.max_repair_attempts = 1
+        h = _make_harness(minimal_workflow, cfg, client=mock_client)
+        result = h.run("test")
+
+        assert result == png
+
+    def test_execution_error_triggers_repair(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
+        """An execution-time error from ComfyUI (not HTTP 400) should also
+        trigger the repair loop."""
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20
+        call_count = {"n": 0}
+
+        def queue_side_effect(_wf):
+            call_count["n"] += 1
+            return {"prompt_id": f"pid-{call_count['n']}"}
+
+        completion_responses = [
+            {"error": "ComfyUI execution error: node 10 failed"},   # first attempt
+            {"outputs": {"7": {"images": [{"filename": "t.png", "subfolder": "", "type": "output"}]}}},  # repair
+        ]
+        completion_iter = iter(completion_responses)
+
+        mock_client = MagicMock()
+        mock_client.queue_prompt.side_effect = queue_side_effect
+        mock_client.wait_for_completion.side_effect = lambda *a, **kw: next(completion_iter)
+        mock_client.collect_images.return_value = [png]
+
+        cfg.max_iterations = 1
+        cfg.max_repair_attempts = 1
+        h = _make_harness(minimal_workflow, cfg, client=mock_client)
+        result = h.run("test")
+
+        assert result == png
+        # Agent: 1 normal + 1 execution repair = 2 calls
+        assert h._agent.plan_and_patch.call_count == 2
+
+    def test_build_repair_feedback_content(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
+        """_build_repair_feedback should include the error message and fix hints."""
+        h = ClawHarness(minimal_workflow, cfg)
+        fb = h._build_repair_feedback("vae slot mismatch", last_result=None)
+
+        assert "vae slot mismatch" in fb
+        assert "Repair Required" in fb
+        assert "inspect_workflow" in fb
+        assert "finalize_workflow" in fb
 
 
 # ---------------------------------------------------------------------------

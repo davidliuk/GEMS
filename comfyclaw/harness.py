@@ -21,8 +21,18 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Error messages that indicate a transient infrastructure fault in ComfyUI
+# (broken pipe from tqdm/progress-bar writing to a closed stderr, etc.).
+# These are NOT workflow logic errors — the agent should not attempt a repair;
+# instead, harness should retry the same workflow after a short pause.
+_INFRA_ERROR_SIGNALS = (
+    "[Errno 32] Broken pipe",
+    "BrokenPipeError",
+)
 
 from .agent import ClawAgent
 from .client import ComfyClient
@@ -46,19 +56,23 @@ class HarnessConfig:
 
     Parameters
     ----------
-    api_key           : Anthropic API key (required).
-    server_address    : ComfyUI HTTP address, e.g. ``"127.0.0.1:8188"``.
-    model             : Claude model for both agent and verifier.
-    max_iterations    : Maximum agent–generate–verify cycles.
-    success_threshold : Stop early when verifier score reaches this value.
-    sync_port         : WebSocket port for live UI sync; 0 to disable.
-    skills_dir        : Path to SKILL.md directory; ``None`` uses built-in skills.
-    evolve_from_best  : Start each iteration from the best previous workflow.
-    max_images        : Max images kept in RAM across attempts (see ClawMemory).
-    score_weights     : ``(req_weight, detail_weight)`` for verifier score blend.
-    image_model       : Pin the ComfyUI checkpoint / UNET to this name, e.g.
-                        ``"Qwen/Qwen-Image-2512"``.  ``None`` leaves the
-                        workflow's existing model untouched.
+    api_key               : Anthropic API key (required).
+    server_address        : ComfyUI HTTP address, e.g. ``"127.0.0.1:8188"``.
+    model                 : Claude model for both agent and verifier.
+    max_iterations        : Maximum agent–generate–verify cycles.
+    success_threshold     : Stop early when verifier score reaches this value.
+    sync_port             : WebSocket port for live UI sync; 0 to disable.
+    skills_dir            : Path to SKILL.md directory; ``None`` uses built-in skills.
+    evolve_from_best      : Start each iteration from the best previous workflow.
+    max_images            : Max images kept in RAM across attempts (see ClawMemory).
+    score_weights         : ``(req_weight, detail_weight)`` for verifier score blend.
+    image_model           : Pin the ComfyUI checkpoint / UNET to this name, e.g.
+                            ``"Qwen/Qwen-Image-2512"``.  ``None`` leaves the
+                            workflow's existing model untouched.
+    max_repair_attempts   : When ComfyUI rejects a workflow (HTTP 4xx / execution
+                            error), the agent gets up to this many chances to
+                            inspect the error and fix the topology before the
+                            iteration is abandoned.  Set to 0 to disable repairs.
     """
 
     api_key: str
@@ -72,6 +86,7 @@ class HarnessConfig:
     max_images: int = 5
     score_weights: tuple[float, float] = field(default_factory=lambda: (0.6, 0.4))
     image_model: str | None = None
+    max_repair_attempts: int = 2
     """
     Pin the image-generation model (checkpoint / UNET) used by ComfyUI.
 
@@ -291,17 +306,48 @@ class ClawHarness:
                 self._evolution_log.record(evo)
                 return None
 
-            # ── Execute in ComfyUI ─────────────────────────────────────────
-            print("[ClawHarness] 🚀 Submitting to ComfyUI…")
-            try:
-                queue_resp = self._client.queue_prompt(wm.workflow)
-                prompt_id = queue_resp["prompt_id"]
-            except Exception as exc:
-                print(f"[ClawHarness] ❌ Queue error: {exc}")
-                self._record_error(iteration, wm.workflow, str(exc))
+            # ── Submit with repair loop ────────────────────────────────────
+            # When ComfyUI rejects a workflow (HTTP 4xx / execution error),
+            # the agent gets up to cfg.max_repair_attempts chances to inspect
+            # the error message and fix the topology before this iteration is
+            # abandoned.
+            prompt_id: str | None = None
+            submission_error: str | None = None
+
+            for repair_round in range(cfg.max_repair_attempts + 1):
+                label = "Submitting" if repair_round == 0 else f"Repair {repair_round}/{cfg.max_repair_attempts}"
+                print(f"[ClawHarness] 🚀 {label} to ComfyUI…")
+
+                # On repair rounds let the agent fix the workflow in-place.
+                if repair_round > 0:
+                    repair_feedback = self._build_repair_feedback(submission_error, last_result)
+                    self._agent.plan_and_patch(
+                        workflow_manager=wm,
+                        original_prompt=prompt,
+                        verifier_feedback=repair_feedback,
+                        iteration=iteration,
+                    )
+                    if cfg.image_model:
+                        wm.apply_image_model(cfg.image_model)
+                    self._on_workflow_change(wm.workflow)
+
+                try:
+                    queue_resp = self._client.queue_prompt(wm.workflow)
+                    prompt_id = queue_resp["prompt_id"]
+                    submission_error = None
+                    if repair_round > 0:
+                        print(f"[ClawHarness] ✅ Repair {repair_round} accepted by ComfyUI.")
+                    break
+                except Exception as exc:
+                    submission_error = str(exc)
+                    print(f"[ClawHarness] ❌ {'Repair' if repair_round > 0 else 'Queue'} error: {exc}")
+
+            if prompt_id is None:
+                self._record_error(iteration, wm.workflow, submission_error or "unknown queue error")
                 self._evolution_log.record(evo)
                 continue
 
+            # ── Wait for completion ────────────────────────────────────────
             try:
                 history = self._client.wait_for_completion(prompt_id, timeout=600)
             except TimeoutError as exc:
@@ -310,13 +356,93 @@ class ClawHarness:
                 self._evolution_log.record(evo)
                 continue
 
+            # ── Handle ComfyUI execution-time error ────────────────────────
             if "error" in history:
-                msg = history["error"]
-                print(f"[ClawHarness] ❌ ComfyUI error: {msg}")
-                self._record_error(iteration, wm.workflow, msg)
-                self._evolution_log.record(evo)
-                last_result = None
-                continue
+                exec_error = history["error"]
+                print(f"[ClawHarness] ❌ ComfyUI execution error: {exec_error}")
+
+                # ── Infra fault (BrokenPipe from tqdm stderr) — not a workflow bug
+                # Retry the SAME workflow once after a short pause; do NOT ask the
+                # agent to repair anything.
+                if any(sig in exec_error for sig in _INFRA_ERROR_SIGNALS):
+                    print(
+                        "[ClawHarness] ⚠  Transient infrastructure error detected "
+                        "(BrokenPipe / progress-bar stderr flush). Waiting 5 s then "
+                        "retrying the same workflow once."
+                    )
+                    time.sleep(5)
+                    try:
+                        rq_retry = self._client.queue_prompt(wm.workflow)
+                        retry_pid = rq_retry["prompt_id"]
+                        print(f"[ClawHarness] 🔄 Infra-retry submitted ({retry_pid}).")
+                        history = self._client.wait_for_completion(retry_pid, timeout=600)
+                    except Exception as infra_exc:
+                        print(f"[ClawHarness] ❌ Infra-retry exception: {infra_exc}")
+                        self._record_error(iteration, wm.workflow, str(infra_exc))
+                        self._evolution_log.record(evo)
+                        last_result = None
+                        continue
+
+                    if "error" in history:
+                        infra_msg = history["error"]
+                        print(f"[ClawHarness] ❌ Infra-retry also failed: {infra_msg}")
+                        self._record_error(iteration, wm.workflow, infra_msg)
+                        self._evolution_log.record(evo)
+                        last_result = None
+                        continue
+                    # Retry succeeded — fall through to image collection below.
+                    print("[ClawHarness] ✅ Infra-retry succeeded.")
+
+                else:
+                    # ── Workflow-logic error — let the agent repair the topology
+                    repaired_prompt_id: str | None = None
+                    exec_submission_error: str | None = exec_error
+
+                    for repair_round in range(1, cfg.max_repair_attempts + 1):
+                        print(f"[ClawHarness] 🔧 Execution repair {repair_round}/{cfg.max_repair_attempts}…")
+                        repair_feedback = self._build_repair_feedback(exec_submission_error, last_result)
+                        self._agent.plan_and_patch(
+                            workflow_manager=wm,
+                            original_prompt=prompt,
+                            verifier_feedback=repair_feedback,
+                            iteration=iteration,
+                        )
+                        if cfg.image_model:
+                            wm.apply_image_model(cfg.image_model)
+                        self._on_workflow_change(wm.workflow)
+
+                        try:
+                            rq = self._client.queue_prompt(wm.workflow)
+                            repaired_prompt_id = rq["prompt_id"]
+                            exec_submission_error = None
+                            print(f"[ClawHarness] ✅ Execution repair {repair_round} accepted.")
+                            break
+                        except Exception as exc2:
+                            exec_submission_error = str(exc2)
+                            print(f"[ClawHarness] ❌ Execution repair {repair_round} failed: {exc2}")
+
+                    if repaired_prompt_id is None:
+                        self._record_error(iteration, wm.workflow, exec_submission_error or exec_error)
+                        self._evolution_log.record(evo)
+                        last_result = None
+                        continue
+
+                    # Wait for the repaired workflow to finish.
+                    try:
+                        history = self._client.wait_for_completion(repaired_prompt_id, timeout=600)
+                    except TimeoutError as exc:
+                        print(f"[ClawHarness] ❌ Timeout after repair: {exc}")
+                        self._record_error(iteration, wm.workflow, str(exc))
+                        self._evolution_log.record(evo)
+                        continue
+
+                    if "error" in history:
+                        msg = history["error"]
+                        print(f"[ClawHarness] ❌ ComfyUI error after repair: {msg}")
+                        self._record_error(iteration, wm.workflow, msg)
+                        self._evolution_log.record(evo)
+                        last_result = None
+                        continue
 
             images = self._client.collect_images(history)
             if not images:
@@ -372,6 +498,35 @@ class ClawHarness:
     def _on_workflow_change(self, workflow: dict) -> None:
         if self._sync:
             self._sync.broadcast(workflow)
+
+    def _build_repair_feedback(self, error_msg: str | None, last_result: VerifierResult | None) -> str:
+        """
+        Feedback passed to the agent when ComfyUI rejected the workflow.
+
+        Puts the raw error front-and-centre so the agent can fix the exact
+        broken connection or invalid parameter before the next submission.
+        """
+        lines = [
+            "## ⚠️ ComfyUI Rejected the Workflow — Repair Required",
+            "",
+            "Your last workflow submission was rejected with the following error:",
+            f"```\n{error_msg or '(no error details)'}\n```",
+            "",
+            "Instructions:",
+            "1. Call inspect_workflow to see the current topology.",
+            "2. Identify the broken node, connection, or invalid parameter.",
+            "3. Fix it with set_param, connect_nodes, delete_node, or add_node.",
+            "4. Call finalize_workflow once the topology is valid.",
+            "",
+            "Common causes:",
+            "  • Wrong output slot index on a connection (e.g. MODEL vs VAE from CheckpointLoaderSimple).",
+            "  • Node class_type does not exist in this ComfyUI build.",
+            "  • Required input left disconnected.",
+            "  • Invalid enum value for a parameter (e.g. weight_dtype).",
+        ]
+        if last_result:
+            lines += ["", "── Previous Verifier Feedback (for context) ──", last_result.format_feedback()]
+        return "\n".join(lines)
 
     def _build_feedback(self, result: VerifierResult | None) -> str | None:
         if result is None:

@@ -256,6 +256,7 @@ def _cmd_run(args: argparse.Namespace, dry: bool = False) -> None:
         evolve_from_best=not args.reset_each_iter,
         score_weights=_env_score_weights(),
         image_model=args.image_model or None,
+        max_repair_attempts=args.max_repair_attempts,
     )
 
     print(f"\n[cli] Workflow    : {args.workflow}")
@@ -266,6 +267,7 @@ def _cmd_run(args: argparse.Namespace, dry: bool = False) -> None:
     print(f"[cli] Dry-run     : {dry}")
     print(f"[cli] Sync port   : {cfg.sync_port or 'disabled'}")
     print(f"[cli] Evolve mode : {'accumulate' if cfg.evolve_from_best else 'reset'}")
+    print(f"[cli] Repair limit: {cfg.max_repair_attempts} attempt(s) per iteration")
 
     with ClawHarness.from_workflow_file(args.workflow, cfg) as h:
         result = h.run(prompt=args.prompt, dry_run=dry)
@@ -328,6 +330,10 @@ def _build_parser() -> argparse.ArgumentParser:
         p.add_argument("--reset-each-iter", action="store_true",
                        default=not _env_bool("COMFYCLAW_EVOLVE_FROM_BEST", True),
                        help="Disable topology accumulation (reset to base each iteration)")
+        p.add_argument("--max-repair-attempts", type=int,
+                       default=_env_int("COMFYCLAW_MAX_REPAIR_ATTEMPTS", 2),
+                       metavar="N",
+                       help="Max agent repair attempts when ComfyUI rejects a workflow (default 2)")
         p.add_argument("--output-dir", default=None, metavar="DIR",
                        help="Directory for saved output images")
         p.add_argument(
