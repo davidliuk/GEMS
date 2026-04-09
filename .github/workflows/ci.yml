@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─── Lint ──────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dev dependencies
+        run: uv sync --group dev
+
+      - name: Ruff lint
+        run: uv run ruff check .
+
+      - name: Ruff format check
+        run: uv run ruff format --check .
+
+  # ─── Type-check ────────────────────────────────────────────────────────────
+  typecheck:
+    name: Type-check (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync dev dependencies
+        run: uv sync --group dev
+
+      - name: mypy
+        run: uv run mypy comfyclaw/
+        continue-on-error: true  # non-blocking for now
+
+  # ─── Tests ─────────────────────────────────────────────────────────────────
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python-version }}
+
+      - name: Sync dev dependencies
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest -ra -q
+
+      - name: Upload coverage (Ubuntu + 3.13 only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: .pytest_cache/
+          retention-days: 7
+
+  # ─── Build check ───────────────────────────────────────────────────────────
+  build:
+    name: Build wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Build
+        run: uv build
+
+      - name: Check wheel contents
+        run: |
+          uv run python -c "
+          import zipfile, sys, glob
+          wheels = glob.glob('dist/*.whl')
+          assert wheels, 'No wheel built'
+          whl = wheels[0]
+          print(f'Wheel: {whl}')
+          with zipfile.ZipFile(whl) as z:
+              names = z.namelist()
+          required = [
+              'comfyclaw/__init__.py',
+              'comfyclaw/agent.py',
+              'comfyclaw/harness.py',
+              'comfyclaw/custom_node/__init__.py',
+              'comfyclaw/custom_node/js/comfy_claw_sync.js',
+          ]
+          for r in required:
+              matches = [n for n in names if r in n]
+              if not matches:
+                  print(f'MISSING: {r}')
+                  sys.exit(1)
+              else:
+                  print(f'  OK: {matches[0]}')
+          print('Wheel check passed.')
+          "
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7

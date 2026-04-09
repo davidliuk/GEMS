@@ -1,0 +1,95 @@
+# ─── Environment & secrets ────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.key
+secrets/
+
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+.installed.cfg
+lib/
+lib64/
+sdist/
+wheels/
+share/python-wheels/
+*.whl
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+.virtualenvs/
+
+# ─── uv ───────────────────────────────────────────────────────────────────────
+# Commit uv.lock for applications; omit for libraries (we omit for now)
+# uv.lock
+
+# ─── Testing ──────────────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage/
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+*.cover
+
+# ─── Linting / type-checking ──────────────────────────────────────────────────
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# ─── Editors ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# ─── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+
+# ─── Jupyter ──────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ─── ComfyClaw runtime outputs ────────────────────────────────────────────────
+comfyclaw_output/
+outputs/
+*.png
+*.jpg
+*.jpeg
+*.webp
+# (allow example images committed deliberately)
+!docs/images/*.png
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/

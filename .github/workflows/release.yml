@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  id-token: write   # needed for PyPI trusted publishing
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    environment: pypi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync
+        run: uv sync --group dev
+
+      - name: Run tests
+        run: uv run pytest -ra -q
+
+      - name: Build
+        run: uv build
+
+      # ── GitHub Release ────────────────────────────────────────────────────
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Extract the section for this version from CHANGELOG.md
+          python3 -c "
+          import re, sys
+          text = open('CHANGELOG.md').read()
+          pattern = rf'## \[{re.escape(\"$VERSION\")}\].*?(?=## \[|\Z)'
+          m = re.search(pattern, text, re.DOTALL)
+          print(m.group(0).strip() if m else 'See CHANGELOG.md')
+          " > release_notes.txt
+          echo "notes<<EOF" >> $GITHUB_OUTPUT
+          cat release_notes.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.changelog.outputs.notes }}
+          files: dist/*
+
+      # ── PyPI (trusted publishing) ─────────────────────────────────────────
+      # Uncomment once you've configured a PyPI trusted publisher for this repo
+      # - name: Publish to PyPI
+      #   uses: pypa/gh-action-pypi-publish@release/v1

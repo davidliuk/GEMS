@@ -1,0 +1,515 @@
+"""
+ClawHarness — top-level orchestrator for the self-evolving generate–verify loop.
+
+Usage (context-manager)::
+
+    cfg = HarnessConfig(api_key="sk-ant-...", max_iterations=4)
+    with ClawHarness.from_workflow_file("workflow_api.json", cfg) as h:
+        image_bytes = h.run("a red fox at dawn, photorealistic")
+
+Topology accumulation
+---------------------
+When ``evolve_from_best=True`` (the default) each iteration starts from the
+**best workflow snapshot** produced so far rather than resetting to the
+original base workflow.  This means LoRA / ControlNet nodes added in round 1
+persist into round 2, and the agent only needs to add *incremental* upgrades.
+Set ``evolve_from_best=False`` to revert to the old reset-each-iteration
+behaviour.
+"""
+from __future__ import annotations
+
+import copy
+import json
+import logging
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from .agent import ClawAgent
+from .client import ComfyClient
+from .memory import ClawMemory
+from .sync_server import SyncServer
+from .verifier import ClawVerifier, VerifierResult
+from .workflow import WorkflowManager
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class HarnessConfig:
+    """
+    All tuning knobs for a ``ClawHarness`` run in one place.
+
+    Parameters
+    ----------
+    api_key           : Anthropic API key (required).
+    server_address    : ComfyUI HTTP address, e.g. ``"127.0.0.1:8188"``.
+    model             : Claude model for both agent and verifier.
+    max_iterations    : Maximum agent–generate–verify cycles.
+    success_threshold : Stop early when verifier score reaches this value.
+    sync_port         : WebSocket port for live UI sync; 0 to disable.
+    skills_dir        : Path to SKILL.md directory; ``None`` uses built-in skills.
+    evolve_from_best  : Start each iteration from the best previous workflow.
+    max_images        : Max images kept in RAM across attempts (see ClawMemory).
+    score_weights     : ``(req_weight, detail_weight)`` for verifier score blend.
+    image_model       : Pin the ComfyUI checkpoint / UNET to this name, e.g.
+                        ``"Qwen/Qwen-Image-2512"``.  ``None`` leaves the
+                        workflow's existing model untouched.
+    """
+
+    api_key: str
+    server_address: str = "127.0.0.1:8188"
+    model: str = "claude-sonnet-4-5"
+    max_iterations: int = 3
+    success_threshold: float = 0.85
+    sync_port: int = 8765
+    skills_dir: str | None = None
+    evolve_from_best: bool = True
+    max_images: int = 5
+    score_weights: tuple[float, float] = field(default_factory=lambda: (0.6, 0.4))
+    image_model: str | None = None
+    """
+    Pin the image-generation model (checkpoint / UNET) used by ComfyUI.
+
+    When set, this model name is written into every loader node
+    (``CheckpointLoaderSimple``, ``UNETLoader``, etc.) in the workflow
+    at startup and after each topology evolution, so the agent cannot
+    accidentally swap it out.
+
+    Examples::
+
+        image_model = "Qwen/Qwen-Image-2512"          # HuggingFace-style path
+        image_model = "realisticVisionV51.safetensors" # local .safetensors file
+        image_model = None   # do not override — use whatever the workflow has
+    """
+
+
+# ---------------------------------------------------------------------------
+# Evolution log
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvolutionEntry:
+    iteration: int
+    node_count_before: int
+    node_count_after: int
+    node_ids_added: list[str]
+    rationale: str
+    verifier_score: float | None = None
+
+    def summary(self) -> str:
+        diff = self.node_count_after - self.node_count_before
+        sign = "+" if diff >= 0 else ""
+        added = ", ".join(self.node_ids_added) or "none"
+        return (
+            f"  Iter {self.iteration}: nodes {self.node_count_before}→{self.node_count_after} "
+            f"({sign}{diff}), added=[{added}], score={self.verifier_score}"
+        )
+
+
+class EvolutionLog:
+    def __init__(self) -> None:
+        self.entries: list[EvolutionEntry] = []
+
+    def record(self, entry: EvolutionEntry) -> None:
+        self.entries.append(entry)
+
+    def format(self) -> str:
+        if not self.entries:
+            return "  (no entries yet)"
+        return "\n".join(e.summary() for e in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+# ---------------------------------------------------------------------------
+# Harness
+# ---------------------------------------------------------------------------
+
+
+class ClawHarness:
+    """
+    Orchestrates the ClawAgent → ComfyUI → ClawVerifier self-evolving loop.
+
+    Prefer constructing via ``from_workflow_file`` or ``from_workflow_dict``.
+    Use as a context manager to ensure the sync server is stopped cleanly.
+    """
+
+    def __init__(self, base_workflow: dict, config: HarnessConfig) -> None:
+        self.base_workflow = copy.deepcopy(base_workflow)
+        self.config = config
+
+        # Apply any pinned image model to the base workflow immediately,
+        # so it is the starting point for every iteration.
+        if config.image_model:
+            wm = WorkflowManager(self.base_workflow)
+            updated = wm.apply_image_model(config.image_model)
+            self.base_workflow = wm.workflow
+            if updated:
+                log.info(
+                    "Pinned image model %r on %d loader node(s): %s",
+                    config.image_model,
+                    len(updated),
+                    ", ".join(f"[{nid}].{p}" for nid, p in updated),
+                )
+            else:
+                log.warning(
+                    "image_model=%r set but no loader nodes found in workflow; "
+                    "the model pin will have no effect.",
+                    config.image_model,
+                )
+
+        self._client = ComfyClient(config.server_address)
+        self._sync = SyncServer(port=config.sync_port) if config.sync_port else None
+        self._memory = ClawMemory(max_images=config.max_images)
+        self._evolution_log = EvolutionLog()
+
+        self._agent = ClawAgent(
+            api_key=config.api_key,
+            model=config.model,
+            server_address=config.server_address,
+            skills_dir=config.skills_dir,
+            on_change=self._on_workflow_change,
+            pinned_image_model=config.image_model,
+        )
+        self._verifier = ClawVerifier(
+            api_key=config.api_key,
+            model=config.model,
+            score_weights=config.score_weights,
+        )
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> ClawHarness:
+        self.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        self.stop()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def start(self) -> None:
+        if self._sync:
+            self._sync.start()
+
+    def stop(self) -> None:
+        if self._sync:
+            self._sync.stop()
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
+
+    def run(self, prompt: str, dry_run: bool = False) -> bytes | None:
+        """
+        Run the self-evolving generate–verify loop.
+
+        Parameters
+        ----------
+        prompt  : Image generation prompt.
+        dry_run : If ``True``, skip actual ComfyUI execution.
+
+        Returns
+        -------
+        Raw image bytes of the best result, or ``None`` on failure / dry-run.
+        """
+        cfg = self.config
+        log.info("Starting run: %r", prompt)
+        print(f"\n{'='*60}")
+        print(f"[ClawHarness] Run: {prompt!r}")
+        print(f"{'='*60}")
+
+        self._memory.clear()
+        self._evolution_log = EvolutionLog()
+        best_image: bytes | None = None
+        best_score = -1.0
+        best_workflow_snapshot: dict | None = None
+        last_result: VerifierResult | None = None
+
+        for iteration in range(1, cfg.max_iterations + 1):
+            print(f"\n--- Iteration {iteration}/{cfg.max_iterations} ---")
+
+            # ── Choose starting workflow ───────────────────────────────────
+            if cfg.evolve_from_best and best_workflow_snapshot is not None:
+                start_wf = copy.deepcopy(best_workflow_snapshot)
+            else:
+                start_wf = copy.deepcopy(self.base_workflow)
+
+            wm = WorkflowManager(start_wf)
+            node_ids_before = set(wm.workflow.keys())
+
+            # ── Agent evolves the workflow ─────────────────────────────────
+            verifier_feedback = self._build_feedback(last_result)
+            memory_summary = self._memory.format_history_for_agent() if self._memory.attempts else None
+
+            print("[ClawHarness] 🤖 Agent is evolving the workflow…")
+            rationale = self._agent.plan_and_patch(
+                workflow_manager=wm,
+                original_prompt=prompt,
+                verifier_feedback=verifier_feedback,
+                memory_summary=memory_summary,
+                iteration=iteration,
+            )
+
+            node_ids_after = set(wm.workflow.keys())
+            added_ids = sorted(node_ids_after - node_ids_before)
+            evo = EvolutionEntry(
+                iteration=iteration,
+                node_count_before=len(node_ids_before),
+                node_count_after=len(node_ids_after),
+                node_ids_added=added_ids,
+                rationale=rationale,
+            )
+            if added_ids:
+                new_classes = [wm.workflow[nid].get("class_type", "?") for nid in added_ids]
+                print(f"[ClawHarness] 🔧 Added nodes {added_ids} → {new_classes}")
+
+            # Re-apply pinned model after agent evolution — the agent may have
+            # added new loader nodes (e.g. a LoRA) and we must ensure the
+            # primary checkpoint / UNET still points at the configured model.
+            if cfg.image_model:
+                wm.apply_image_model(cfg.image_model)
+
+            self._on_workflow_change(wm.workflow)
+
+            # ── Dry-run mode ───────────────────────────────────────────────
+            if dry_run:
+                print("[ClawHarness] ⏭  dry_run=True — skipping ComfyUI execution.")
+                print(f"[ClawHarness] Final workflow ({len(wm)} nodes):")
+                print(json.dumps(wm.workflow, indent=2)[:3000])
+                self._evolution_log.record(evo)
+                return None
+
+            # ── Execute in ComfyUI ─────────────────────────────────────────
+            print("[ClawHarness] 🚀 Submitting to ComfyUI…")
+            try:
+                queue_resp = self._client.queue_prompt(wm.workflow)
+                prompt_id = queue_resp["prompt_id"]
+            except Exception as exc:
+                print(f"[ClawHarness] ❌ Queue error: {exc}")
+                self._record_error(iteration, wm.workflow, str(exc))
+                self._evolution_log.record(evo)
+                continue
+
+            try:
+                history = self._client.wait_for_completion(prompt_id, timeout=600)
+            except TimeoutError as exc:
+                print(f"[ClawHarness] ❌ Timeout: {exc}")
+                self._record_error(iteration, wm.workflow, str(exc))
+                self._evolution_log.record(evo)
+                continue
+
+            if "error" in history:
+                msg = history["error"]
+                print(f"[ClawHarness] ❌ ComfyUI error: {msg}")
+                self._record_error(iteration, wm.workflow, msg)
+                self._evolution_log.record(evo)
+                last_result = None
+                continue
+
+            images = self._client.collect_images(history)
+            if not images:
+                print("[ClawHarness] ⚠  No images in output — check workflow.")
+                self._evolution_log.record(evo)
+                continue
+
+            image_bytes = images[0]
+            print(f"[ClawHarness] 🖼  Got image ({len(image_bytes):,} bytes)")
+
+            # ── Verify ────────────────────────────────────────────────────
+            print("[ClawHarness] 🔍 Verifying image…")
+            result = self._verifier.verify(image_bytes, prompt)
+            last_result = result
+            print(f"[ClawHarness] Score: {result.score:.2f}")
+            print(result.format_feedback())
+
+            if result.score > best_score:
+                best_score = result.score
+                best_image = image_bytes
+                best_workflow_snapshot = wm.to_dict()
+
+            evo.verifier_score = result.score
+            self._evolution_log.record(evo)
+
+            # ── Record in memory ──────────────────────────────────────────
+            experience = self._summarize_experience(prompt, result.passed, result.failed, rationale)
+            self._memory.record(
+                iteration=iteration,
+                workflow_snapshot=wm.to_dict(),
+                verifier_score=result.score,
+                passed=result.passed,
+                failed=result.failed,
+                experience=experience,
+                image_bytes=image_bytes,
+            )
+
+            # ── Early stop ────────────────────────────────────────────────
+            if result.score >= cfg.success_threshold:
+                print(
+                    f"[ClawHarness] ✅ Score {result.score:.2f} ≥ threshold "
+                    f"{cfg.success_threshold} — stopping early."
+                )
+                break
+
+        self._print_summary(best_score)
+        return best_image
+
+    # ------------------------------------------------------------------
+    # Callbacks & helpers
+    # ------------------------------------------------------------------
+
+    def _on_workflow_change(self, workflow: dict) -> None:
+        if self._sync:
+            self._sync.broadcast(workflow)
+
+    def _build_feedback(self, result: VerifierResult | None) -> str | None:
+        if result is None:
+            return None
+        lines = [result.format_feedback()]
+        if self._evolution_log.entries:
+            lines.append("\n── Evolution History ──")
+            lines.append(self._evolution_log.format())
+        lines.append(
+            "\nChoose the single highest-impact structural upgrade from the "
+            "evolution_suggestions above. Declare it with report_evolution_strategy first."
+        )
+        return "\n".join(lines)
+
+    def _record_error(self, iteration: int, workflow: dict, msg: str) -> None:
+        self._memory.record(
+            iteration=iteration,
+            workflow_snapshot=workflow,
+            verifier_score=0.0,
+            passed=[],
+            failed=[f"Execution error: {msg}"],
+            experience=f"Workflow failed: {msg}. Inspect and fix before next attempt.",
+        )
+
+    def _summarize_experience(
+        self, prompt: str, passed: list[str], failed: list[str], rationale: str
+    ) -> str:
+        try:
+            msg = (
+                f"Summarize in ≤80 words. Focus on what worked, failed, and the key lesson.\n\n"
+                f"Prompt: {prompt}\nPassed: {', '.join(passed) or 'none'}\n"
+                f"Failed: {', '.join(failed) or 'none'}\nAgent rationale: {rationale}"
+            )
+            resp = self._verifier.client.messages.create(
+                model=self._verifier.model,
+                max_tokens=200,
+                messages=[{"role": "user", "content": msg}],
+            )
+            return resp.content[0].text.strip()
+        except Exception as exc:
+            return f"Summary unavailable: {exc}"
+
+    def _print_summary(self, best_score: float) -> None:
+        print("\n[ClawHarness] ── Evolution Summary ──")
+        print(self._evolution_log.format())
+        print(f"[ClawHarness] Best score: {best_score:.2f}")
+
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
+
+    @property
+    def evolution_log(self) -> EvolutionLog:
+        return self._evolution_log
+
+    @property
+    def memory(self) -> ClawMemory:
+        return self._memory
+
+    # ------------------------------------------------------------------
+    # Factory methods
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_workflow_file(cls, path: str, config: HarnessConfig) -> ClawHarness:
+        """
+        Load a workflow from a JSON file.
+
+        Handles:
+        - API-format dict (keys are numeric strings with ``class_type``)
+        - Prompt-keyed save (``{"prompt": {...}}``)
+        - UI-format with ``nodes`` list (attempts sibling ``*_api.json`` first)
+        """
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+
+        if isinstance(data, dict) and "prompt" in data and isinstance(data["prompt"], dict):
+            data = data["prompt"]
+        elif isinstance(data, dict) and "nodes" in data and isinstance(data["nodes"], list):
+            api_data = _try_sibling_api(path)
+            if api_data is not None:
+                print("[ClawHarness] Using sibling API-format workflow.")
+                data = api_data
+            else:
+                print("[ClawHarness] ⚠  UI-format workflow; converting (widget names approximate).")
+                data = _ui_to_api(data)
+
+        return cls(base_workflow=data, config=config)
+
+    @classmethod
+    def from_workflow_dict(cls, workflow: dict, config: HarnessConfig) -> ClawHarness:
+        return cls(base_workflow=workflow, config=config)
+
+
+# ---------------------------------------------------------------------------
+# UI → API conversion helpers
+# ---------------------------------------------------------------------------
+
+
+def _try_sibling_api(ui_path: str) -> dict | None:
+    stem = Path(ui_path).stem
+    parent = Path(ui_path).parent
+    alt_stem = stem.removesuffix("_2512")
+    for candidate in [parent / f"{stem}_api.json", parent / f"{alt_stem}_api.json"]:
+        if candidate.exists():
+            with open(candidate, encoding="utf-8") as fh:
+                return json.load(fh)
+    return None
+
+
+def _ui_to_api(ui_data: dict) -> dict:
+    """
+    Best-effort conversion of ComfyUI UI-format to API format.
+    Widget values are stored under ``__widget_N`` placeholder keys.
+    """
+    link_map: dict[int, list] = {}
+    for lk in ui_data.get("links", []):
+        if len(lk) >= 3:
+            link_map[lk[0]] = [lk[1], lk[2]]
+
+    api: dict[str, dict] = {}
+    for node in ui_data.get("nodes", []):
+        nid = str(node["id"])
+        class_type = node.get("type", "Unknown")
+        inputs: dict = {}
+
+        for inp in node.get("inputs", []):
+            link_id = inp.get("link")
+            if link_id is not None and link_id in link_map:
+                src = link_map[link_id]
+                inputs[inp.get("name", "input")] = [str(src[0]), src[1]]
+
+        for i, val in enumerate(node.get("widgets_values", [])):
+            inputs[f"__widget_{i}"] = val
+
+        api[nid] = {
+            "class_type": class_type,
+            "_meta": {"title": node.get("title", class_type)},
+            "inputs": inputs,
+        }
+    return api

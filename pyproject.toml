@@ -1,0 +1,140 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Project metadata
+# ─────────────────────────────────────────────────────────────────────────────
+
+[project]
+name = "comfyclaw"
+version = "0.1.0"
+description = "Agentic harness for self-evolving ComfyUI image-generation workflows"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "ComfyClaw Contributors" }]
+keywords = ["comfyui", "ai", "agent", "image-generation", "claude", "anthropic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Graphics",
+]
+
+# Core runtime dependencies (minimal — websockets optional for sync)
+dependencies = [
+    "anthropic>=0.25",
+    "python-dotenv>=1.0",
+]
+
+[project.urls]
+Homepage      = "https://github.com/davidliuk/comfyclaw"
+Documentation = "https://github.com/davidliuk/comfyclaw#readme"
+Repository    = "https://github.com/davidliuk/comfyclaw"
+Issues        = "https://github.com/davidliuk/comfyclaw/issues"
+Changelog     = "https://github.com/davidliuk/comfyclaw/blob/main/CHANGELOG.md"
+
+[project.scripts]
+comfyclaw = "comfyclaw.cli:main"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Optional dependency groups (install with: uv sync --extra sync)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[project.optional-dependencies]
+# Live WebSocket sync to ComfyUI canvas
+sync = ["websockets>=12"]
+# Full install (all extras)
+all = ["comfyclaw[sync]"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# uv dev dependency groups  (install with: uv sync --group dev)
+# ─────────────────────────────────────────────────────────────────────────────
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "pytest-mock>=3.12",
+    "ruff>=0.9",
+    "mypy>=1.10",
+    "websockets>=12",          # needed for sync tests
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Hatchling build config
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.hatch.build.targets.wheel]
+packages = ["comfyclaw"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+# nothing extra
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+# Include SKILL.md files and the ComfyUI custom node in the wheel
+[tool.hatch.build]
+include = [
+    "comfyclaw/**",
+    "LICENSE",
+    "README.md",
+]
+exclude = [
+    "comfyclaw/__pycache__",
+    "comfyclaw/**/__pycache__",
+    "*.pyc",
+    "*.pyo",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# pytest
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.pytest.ini_options]
+testpaths    = ["tests"]
+asyncio_mode = "auto"
+addopts      = "-ra -q"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ruff linter + formatter
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.ruff]
+line-length    = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select  = ["E", "F", "W", "I", "UP", "B", "C4", "TID"]
+ignore  = [
+    "E501",   # line too long — handled by formatter
+    "B008",   # function call in default arg (common in CLI)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["comfyclaw"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# mypy
+# ─────────────────────────────────────────────────────────────────────────────
+
+[tool.mypy]
+python_version         = "3.10"
+strict                 = false
+ignore_missing_imports = true
+warn_return_any        = false
+warn_unused_ignores    = true
+exclude                = ["tests/"]
