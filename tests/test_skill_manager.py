@@ -1,4 +1,5 @@
 """Unit tests for SkillManager (Anthropic Agent Skills format)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -143,7 +144,9 @@ class TestLoad:
         sm = SkillManager(tmp_path)
         assert sm.skill_names == []
 
-    def test_skips_dir_without_skill_md(self, tmp_path: Path, recwarn: pytest.WarningsChecker) -> None:
+    def test_skips_dir_without_skill_md(
+        self, tmp_path: Path, recwarn: pytest.WarningsChecker
+    ) -> None:
         (tmp_path / "empty-skill").mkdir()
         sm = SkillManager(tmp_path)
         assert sm.skill_names == []
@@ -310,10 +313,7 @@ class TestBuildAvailableSkillsXml:
         d = tmp_path / "my-skill"
         d.mkdir()
         content = (
-            "---\n"
-            "name: my-skill\n"
-            'description: A skill with <special> & "chars".\n'
-            "---\n\nBody.\n"
+            '---\nname: my-skill\ndescription: A skill with <special> & "chars".\n---\n\nBody.\n'
         )
         (d / "SKILL.md").write_text(content)
         sm = SkillManager(tmp_path)

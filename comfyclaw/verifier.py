@@ -10,6 +10,7 @@ Verification pipeline
                               evolution suggestions, and a holistic quality score.
 4. Blend the requirement score and the detail score into a final ``VerifierResult``.
 """
+
 from __future__ import annotations
 
 import base64
@@ -36,10 +37,10 @@ class RequirementCheck:
 class RegionIssue:
     """A quality issue localised to a spatial region of the image."""
 
-    region: str          # e.g. "background", "hands", "face"
-    issue_type: str      # anatomy | texture | lighting | artifact | composition | detail
+    region: str  # e.g. "background", "hands", "face"
+    issue_type: str  # anatomy | texture | lighting | artifact | composition | detail
     description: str
-    severity: str        # low | medium | high
+    severity: str  # low | medium | high
     fix_strategies: list[str]
 
 
@@ -47,7 +48,7 @@ class RegionIssue:
 class VerifierResult:
     """Full verification report returned to ClawHarness."""
 
-    score: float                        # 0.0 – 1.0 blended quality score
+    score: float  # 0.0 – 1.0 blended quality score
     checks: list[RequirementCheck]
     passed: list[str]
     failed: list[str]
@@ -121,6 +122,7 @@ Intended prompt: {prompt}
 # ---------------------------------------------------------------------------
 # Media-type detection
 # ---------------------------------------------------------------------------
+
 
 def _detect_media_type(image_bytes: bytes) -> str:
     """Detect image MIME type from magic bytes."""
@@ -252,20 +254,22 @@ class ClawVerifier:
                 resp = self.client.messages.create(
                     model=self.model,
                     max_tokens=16,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": b64_data,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": b64_data,
+                                    },
                                 },
-                            },
-                            {"type": "text", "text": f"Answer only 'yes' or 'no'. {q}"},
-                        ],
-                    }],
+                                {"type": "text", "text": f"Answer only 'yes' or 'no'. {q}"},
+                            ],
+                        }
+                    ],
                 )
                 ans = resp.content[0].text.strip().lower()
                 return RequirementCheck(q, ans, "yes" in ans and "no" not in ans)
@@ -276,30 +280,30 @@ class ClawVerifier:
         with ThreadPoolExecutor(max_workers=n_workers) as ex:
             return list(ex.map(check_one, questions))
 
-    def _detailed_analysis(
-        self, b64_data: str, media_type: str, prompt: str
-    ) -> dict:
+    def _detailed_analysis(self, b64_data: str, media_type: str, prompt: str) -> dict:
         try:
             resp = self.client.messages.create(
                 model=self.model,
                 max_tokens=1500,
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": media_type,
-                                "data": b64_data,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": b64_data,
+                                },
                             },
-                        },
-                        {
-                            "type": "text",
-                            "text": _DETAILED_ANALYSIS_PROMPT.format(prompt=prompt),
-                        },
-                    ],
-                }],
+                            {
+                                "type": "text",
+                                "text": _DETAILED_ANALYSIS_PROMPT.format(prompt=prompt),
+                            },
+                        ],
+                    }
+                ],
             )
             text = resp.content[0].text.strip()
             m = re.search(r"\{.*\}", text, re.DOTALL)

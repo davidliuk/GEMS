@@ -1,4 +1,5 @@
 """Unit tests for ClawAgent tool dispatch (Anthropic mocked)."""
+
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from comfyclaw.workflow import WorkflowManager
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_agent(
     mock_client: MagicMock,
     server_address: str = "127.0.0.1:8188",
@@ -21,6 +23,7 @@ def _make_agent(
     agent.model = "claude-test"
     agent.server_address = server_address
     from comfyclaw.skill_manager import SkillManager
+
     agent.skill_manager = SkillManager(None)  # built-in skills
     agent.on_change = None
     agent.max_tool_rounds = 10
@@ -60,6 +63,7 @@ def _finalize_response(rationale: str = "Test rationale.") -> MagicMock:
 # Direct tool dispatch tests (unit-level)
 # ---------------------------------------------------------------------------
 
+
 class TestDispatch:
     def test_set_param_mutates_workflow(self, wm: WorkflowManager) -> None:
         agent = _make_agent(MagicMock())
@@ -72,9 +76,7 @@ class TestDispatch:
 
     def test_add_node_returns_id(self, wm: WorkflowManager) -> None:
         agent = _make_agent(MagicMock())
-        result, stop = agent._dispatch(
-            "add_node", {"class_type": "VAEDecode", "inputs": {}}, wm
-        )
+        result, stop = agent._dispatch("add_node", {"class_type": "VAEDecode", "inputs": {}}, wm)
         assert "VAEDecode" in result
         assert stop is False
         # A new node should now exist
@@ -85,7 +87,12 @@ class TestDispatch:
         agent = _make_agent(MagicMock())
         result, stop = agent._dispatch(
             "connect_nodes",
-            {"src_node_id": "3", "src_output_index": 0, "dst_node_id": nid, "dst_input_name": "samples"},
+            {
+                "src_node_id": "3",
+                "src_output_index": 0,
+                "dst_node_id": nid,
+                "dst_input_name": "samples",
+            },
             wm,
         )
         assert wm.workflow[nid]["inputs"]["samples"] == ["3", 0]
@@ -122,6 +129,7 @@ class TestDispatch:
 # LoRA rewiring
 # ---------------------------------------------------------------------------
 
+
 class TestAddLora:
     def test_rewires_model_and_clip_consumers(self, wm: WorkflowManager) -> None:
         """After add_lora_loader, KSampler should take model from LoraLoader[0]."""
@@ -149,6 +157,7 @@ class TestAddLora:
 # ---------------------------------------------------------------------------
 # Regional attention (bug fix: no _meta KeyError)
 # ---------------------------------------------------------------------------
+
 
 class TestRegionalAttention:
     def test_no_meta_keyerror(self, wm: WorkflowManager) -> None:
@@ -191,6 +200,7 @@ class TestRegionalAttention:
 # Hires fix
 # ---------------------------------------------------------------------------
 
+
 class TestHiresFix:
     def test_adds_upscale_and_second_sampler(self, wm: WorkflowManager) -> None:
         # Add a VAEDecode and SaveImage first so hires fix has something to re-wire
@@ -211,7 +221,8 @@ class TestHiresFix:
         )
         upscale_nids = wm.get_nodes_by_class("LatentUpscaleBy")
         hires_ks_nids = [
-            nid for nid, n in wm.workflow.items()
+            nid
+            for nid, n in wm.workflow.items()
             if n.get("class_type") == "KSampler" and nid != "3"
         ]
         assert len(upscale_nids) == 1
@@ -221,6 +232,7 @@ class TestHiresFix:
 # ---------------------------------------------------------------------------
 # Query models (offline)
 # ---------------------------------------------------------------------------
+
 
 class TestQueryModels:
     def test_offline_returns_error_string(self, wm: WorkflowManager) -> None:
@@ -232,9 +244,7 @@ class TestQueryModels:
 
     def test_unknown_model_type_returns_error(self, wm: WorkflowManager) -> None:
         agent = _make_agent(MagicMock())
-        result, stop = agent._dispatch(
-            "query_available_models", {"model_type": "unknown_type"}, wm
-        )
+        result, stop = agent._dispatch("query_available_models", {"model_type": "unknown_type"}, wm)
         assert "❌" in result
         assert stop is False
 
@@ -243,6 +253,7 @@ class TestQueryModels:
 # plan_and_patch integration (mocked Anthropic)
 # ---------------------------------------------------------------------------
 
+
 class TestPlanAndPatch:
     def test_finalize_returns_rationale(self, wm: WorkflowManager) -> None:
         mock_client = MagicMock()
@@ -250,7 +261,9 @@ class TestPlanAndPatch:
         strategy_resp = MagicMock()
         strategy_resp.stop_reason = "tool_use"
         strategy_resp.content = [
-            _tool_use_block("report_evolution_strategy", {"strategy": "optimize", "top_issue": "quality"}, "b1"),
+            _tool_use_block(
+                "report_evolution_strategy", {"strategy": "optimize", "top_issue": "quality"}, "b1"
+            ),
         ]
         finalize_resp = MagicMock()
         finalize_resp.stop_reason = "tool_use"

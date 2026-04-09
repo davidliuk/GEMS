@@ -16,6 +16,7 @@ persist into round 2, and the agent only needs to add *incremental* upgrades.
 Set ``evolve_from_best=False`` to revert to the old reset-each-iteration
 behaviour.
 """
+
 from __future__ import annotations
 
 import copy
@@ -241,9 +242,9 @@ class ClawHarness:
         """
         cfg = self.config
         log.info("Starting run: %r", prompt)
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"[ClawHarness] Run: {prompt!r}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         self._memory.clear()
         self._evolution_log = EvolutionLog()
@@ -266,7 +267,9 @@ class ClawHarness:
 
             # ── Agent evolves the workflow ─────────────────────────────────
             verifier_feedback = self._build_feedback(last_result)
-            memory_summary = self._memory.format_history_for_agent() if self._memory.attempts else None
+            memory_summary = (
+                self._memory.format_history_for_agent() if self._memory.attempts else None
+            )
 
             print("[ClawHarness] 🤖 Agent is evolving the workflow…")
             rationale = self._agent.plan_and_patch(
@@ -315,7 +318,11 @@ class ClawHarness:
             submission_error: str | None = None
 
             for repair_round in range(cfg.max_repair_attempts + 1):
-                label = "Submitting" if repair_round == 0 else f"Repair {repair_round}/{cfg.max_repair_attempts}"
+                label = (
+                    "Submitting"
+                    if repair_round == 0
+                    else f"Repair {repair_round}/{cfg.max_repair_attempts}"
+                )
                 print(f"[ClawHarness] 🚀 {label} to ComfyUI…")
 
                 # On repair rounds let the agent fix the workflow in-place.
@@ -340,10 +347,14 @@ class ClawHarness:
                     break
                 except Exception as exc:
                     submission_error = str(exc)
-                    print(f"[ClawHarness] ❌ {'Repair' if repair_round > 0 else 'Queue'} error: {exc}")
+                    print(
+                        f"[ClawHarness] ❌ {'Repair' if repair_round > 0 else 'Queue'} error: {exc}"
+                    )
 
             if prompt_id is None:
-                self._record_error(iteration, wm.workflow, submission_error or "unknown queue error")
+                self._record_error(
+                    iteration, wm.workflow, submission_error or "unknown queue error"
+                )
                 self._evolution_log.record(evo)
                 continue
 
@@ -399,8 +410,12 @@ class ClawHarness:
                     exec_submission_error: str | None = exec_error
 
                     for repair_round in range(1, cfg.max_repair_attempts + 1):
-                        print(f"[ClawHarness] 🔧 Execution repair {repair_round}/{cfg.max_repair_attempts}…")
-                        repair_feedback = self._build_repair_feedback(exec_submission_error, last_result)
+                        print(
+                            f"[ClawHarness] 🔧 Execution repair {repair_round}/{cfg.max_repair_attempts}…"
+                        )
+                        repair_feedback = self._build_repair_feedback(
+                            exec_submission_error, last_result
+                        )
                         self._agent.plan_and_patch(
                             workflow_manager=wm,
                             original_prompt=prompt,
@@ -419,10 +434,14 @@ class ClawHarness:
                             break
                         except Exception as exc2:
                             exec_submission_error = str(exc2)
-                            print(f"[ClawHarness] ❌ Execution repair {repair_round} failed: {exc2}")
+                            print(
+                                f"[ClawHarness] ❌ Execution repair {repair_round} failed: {exc2}"
+                            )
 
                     if repaired_prompt_id is None:
-                        self._record_error(iteration, wm.workflow, exec_submission_error or exec_error)
+                        self._record_error(
+                            iteration, wm.workflow, exec_submission_error or exec_error
+                        )
                         self._evolution_log.record(evo)
                         last_result = None
                         continue
@@ -499,7 +518,9 @@ class ClawHarness:
         if self._sync:
             self._sync.broadcast(workflow)
 
-    def _build_repair_feedback(self, error_msg: str | None, last_result: VerifierResult | None) -> str:
+    def _build_repair_feedback(
+        self, error_msg: str | None, last_result: VerifierResult | None
+    ) -> str:
         """
         Feedback passed to the agent when ComfyUI rejected the workflow.
 
@@ -525,7 +546,11 @@ class ClawHarness:
             "  • Invalid enum value for a parameter (e.g. weight_dtype).",
         ]
         if last_result:
-            lines += ["", "── Previous Verifier Feedback (for context) ──", last_result.format_feedback()]
+            lines += [
+                "",
+                "── Previous Verifier Feedback (for context) ──",
+                last_result.format_feedback(),
+            ]
         return "\n".join(lines)
 
     def _build_feedback(self, result: VerifierResult | None) -> str | None:

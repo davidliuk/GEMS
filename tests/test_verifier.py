@@ -1,4 +1,5 @@
 """Unit tests for ClawVerifier (Anthropic client mocked)."""
+
 from __future__ import annotations
 
 import base64
@@ -12,6 +13,7 @@ from comfyclaw.verifier import ClawVerifier, VerifierResult, _detect_media_type
 # ---------------------------------------------------------------------------
 # Media type detection
 # ---------------------------------------------------------------------------
+
 
 class TestDetectMediaType:
     def test_png_magic(self, png_bytes: bytes) -> None:
@@ -27,6 +29,7 @@ class TestDetectMediaType:
 # ---------------------------------------------------------------------------
 # Helpers to build mock Anthropic responses
 # ---------------------------------------------------------------------------
+
 
 def _text_response(text: str) -> MagicMock:
     content = MagicMock()
@@ -49,10 +52,13 @@ def _make_verifier(mock_client: MagicMock) -> ClawVerifier:
 # Decompose prompt
 # ---------------------------------------------------------------------------
 
+
 class TestDecomposePrompt:
     def test_parses_json_array(self) -> None:
         mock_client = MagicMock()
-        mock_client.messages.create.return_value = _text_response('["Is it red?", "Is there a fox?"]')
+        mock_client.messages.create.return_value = _text_response(
+            '["Is it red?", "Is there a fox?"]'
+        )
         v = _make_verifier(mock_client)
         questions = v._decompose_prompt("a red fox")
         assert questions == ["Is it red?", "Is there a fox?"]
@@ -71,6 +77,7 @@ class TestDecomposePrompt:
 # Requirement checks
 # ---------------------------------------------------------------------------
 
+
 class TestCheckRequirements:
     def test_all_yes_gives_full_score(self, png_bytes: bytes) -> None:
         mock_client = MagicMock()
@@ -79,12 +86,16 @@ class TestCheckRequirements:
             _text_response('["Is there a fox?", "Is the fox red?"]'),
             _text_response("yes"),
             _text_response("yes"),
-            _text_response(json.dumps({
-                "overall_assessment": "Perfect",
-                "score": 1.0,
-                "region_issues": [],
-                "evolution_suggestions": [],
-            })),
+            _text_response(
+                json.dumps(
+                    {
+                        "overall_assessment": "Perfect",
+                        "score": 1.0,
+                        "region_issues": [],
+                        "evolution_suggestions": [],
+                    }
+                )
+            ),
         ]
         v = _make_verifier(mock_client)
         result = v.verify(png_bytes, "a red fox")
@@ -97,12 +108,16 @@ class TestCheckRequirements:
             _text_response('["Q1?", "Q2?"]'),
             _text_response("yes"),
             _text_response("no"),
-            _text_response(json.dumps({
-                "overall_assessment": "Partial",
-                "score": 0.5,
-                "region_issues": [],
-                "evolution_suggestions": [],
-            })),
+            _text_response(
+                json.dumps(
+                    {
+                        "overall_assessment": "Partial",
+                        "score": 0.5,
+                        "region_issues": [],
+                        "evolution_suggestions": [],
+                    }
+                )
+            ),
         ]
         v = _make_verifier(mock_client)
         result = v.verify(png_bytes, "prompt")
@@ -114,19 +129,27 @@ class TestCheckRequirements:
         mock_client.messages.create.side_effect = [
             _text_response('["Q?"]'),
             _text_response("yes"),
-            _text_response(json.dumps({
-                "overall_assessment": "ok", "score": 1.0,
-                "region_issues": [], "evolution_suggestions": [],
-            })),
+            _text_response(
+                json.dumps(
+                    {
+                        "overall_assessment": "ok",
+                        "score": 1.0,
+                        "region_issues": [],
+                        "evolution_suggestions": [],
+                    }
+                )
+            ),
         ]
         v = _make_verifier(mock_client)
         v.verify(jpeg_bytes, "prompt")
         # Check that at least one call used image/jpeg
         all_calls = mock_client.messages.create.call_args_list
         image_calls = [
-            c for c in all_calls
+            c
+            for c in all_calls
             if any(
-                msg.get("content") and isinstance(msg["content"], list)
+                msg.get("content")
+                and isinstance(msg["content"], list)
                 and any(
                     part.get("type") == "image"
                     and part.get("source", {}).get("media_type") == "image/jpeg"
@@ -160,10 +183,16 @@ class TestCheckRequirements:
             capture_create,
             capture_create,
             capture_create,
-            _text_response(json.dumps({
-                "overall_assessment": "ok", "score": 0.9,
-                "region_issues": [], "evolution_suggestions": [],
-            })),
+            _text_response(
+                json.dumps(
+                    {
+                        "overall_assessment": "ok",
+                        "score": 0.9,
+                        "region_issues": [],
+                        "evolution_suggestions": [],
+                    }
+                )
+            ),
         ]
         v = _make_verifier(mock_client)
         v.verify(png_bytes, "a prompt")
@@ -176,6 +205,7 @@ class TestCheckRequirements:
 # ---------------------------------------------------------------------------
 # Region issue parsing
 # ---------------------------------------------------------------------------
+
 
 class TestRegionIssues:
     def test_region_issues_parsed(self, png_bytes: bytes) -> None:
@@ -219,17 +249,24 @@ class TestRegionIssues:
 # Score blending
 # ---------------------------------------------------------------------------
 
+
 class TestScoreBlending:
     def test_blends_req_and_detail(self, png_bytes: bytes) -> None:
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = [
             _text_response('["Q1?", "Q2?"]'),
             _text_response("yes"),
-            _text_response("no"),   # 50% requirement pass rate
-            _text_response(json.dumps({
-                "overall_assessment": "ok", "score": 0.8,
-                "region_issues": [], "evolution_suggestions": [],
-            })),
+            _text_response("no"),  # 50% requirement pass rate
+            _text_response(
+                json.dumps(
+                    {
+                        "overall_assessment": "ok",
+                        "score": 0.8,
+                        "region_issues": [],
+                        "evolution_suggestions": [],
+                    }
+                )
+            ),
         ]
         v = ClawVerifier.__new__(ClawVerifier)
         v.client = mock_client
@@ -245,7 +282,9 @@ class TestScoreBlending:
         mock_client.messages.create.side_effect = [
             _text_response('["Q?"]'),
             _text_response("yes"),
-            _text_response('{"overall_assessment": "err", "region_issues": [], "evolution_suggestions": []}'),
+            _text_response(
+                '{"overall_assessment": "err", "region_issues": [], "evolution_suggestions": []}'
+            ),
         ]
         v = _make_verifier(mock_client)
         result = v.verify(png_bytes, "p")
@@ -255,6 +294,7 @@ class TestScoreBlending:
 # ---------------------------------------------------------------------------
 # VerifierResult.format_feedback
 # ---------------------------------------------------------------------------
+
 
 class TestFormatFeedback:
     def test_contains_score(self) -> None:

@@ -1,4 +1,5 @@
 """Unit tests for ClawHarness (ComfyClient and Anthropic mocked)."""
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from comfyclaw.harness import ClawHarness, EvolutionEntry, HarnessConfig
 # Config fixture
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def cfg() -> HarnessConfig:
     return HarnessConfig(
@@ -19,7 +21,7 @@ def cfg() -> HarnessConfig:
         server_address="127.0.0.1:9999",  # nothing listening here
         max_iterations=3,
         success_threshold=0.9,
-        sync_port=0,                      # disable sync server
+        sync_port=0,  # disable sync server
         evolve_from_best=True,
     )
 
@@ -27,6 +29,7 @@ def cfg() -> HarnessConfig:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _mock_agent(rationale: str = "test rationale") -> MagicMock:
     agent = MagicMock()
@@ -36,6 +39,7 @@ def _mock_agent(rationale: str = "test rationale") -> MagicMock:
 
 def _mock_verifier(score: float = 0.7) -> MagicMock:
     from comfyclaw.verifier import RequirementCheck, VerifierResult
+
     result = VerifierResult(
         score=score,
         checks=[RequirementCheck("Q1?", "yes", True)],
@@ -72,9 +76,7 @@ def _mock_comfy_client(image_bytes: bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20)
     client = MagicMock()
     client.queue_prompt.return_value = {"prompt_id": "test-prompt-id"}
     client.wait_for_completion.return_value = {
-        "outputs": {
-            "7": {"images": [{"filename": "test.png", "subfolder": "", "type": "output"}]}
-        }
+        "outputs": {"7": {"images": [{"filename": "test.png", "subfolder": "", "type": "output"}]}}
     }
     client.collect_images.return_value = [image_bytes]
     return client
@@ -83,6 +85,7 @@ def _mock_comfy_client(image_bytes: bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 20)
 # ---------------------------------------------------------------------------
 # Dry-run
 # ---------------------------------------------------------------------------
+
 
 class TestDryRun:
     def test_dry_run_returns_none(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
@@ -107,6 +110,7 @@ class TestDryRun:
 # Early stopping
 # ---------------------------------------------------------------------------
 
+
 class TestEarlyStop:
     def test_stops_at_threshold(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
         mock_verifier = _mock_verifier(score=0.95)  # above threshold 0.9
@@ -129,6 +133,7 @@ class TestEarlyStop:
 # ---------------------------------------------------------------------------
 # Topology accumulation
 # ---------------------------------------------------------------------------
+
 
 class TestTopologyAccumulation:
     def test_evolve_from_best_starts_from_best_snapshot(
@@ -153,14 +158,19 @@ class TestTopologyAccumulation:
 
         # Iter 1 score = 0.7, iter 2 score = 0.5 (so best is iter 1)
         from comfyclaw.verifier import VerifierResult
+
         iter_scores = [0.7, 0.5]
         score_iter = iter(iter_scores)
 
         def make_result():
             s = next(score_iter, 0.5)
             return VerifierResult(
-                score=s, checks=[], passed=[], failed=[],
-                overall_assessment=f"{s}", evolution_suggestions=[],
+                score=s,
+                checks=[],
+                passed=[],
+                failed=[],
+                overall_assessment=f"{s}",
+                evolution_suggestions=[],
             )
 
         mock_verifier = MagicMock()
@@ -174,7 +184,9 @@ class TestTopologyAccumulation:
         mock_client = _mock_comfy_client()
         cfg.max_iterations = 2
         cfg.success_threshold = 1.0  # never stop early
-        h = _make_harness(minimal_workflow, cfg, agent=mock_agent, verifier=mock_verifier, client=mock_client)
+        h = _make_harness(
+            minimal_workflow, cfg, agent=mock_agent, verifier=mock_verifier, client=mock_client
+        )
         h.run("test")
 
         # Iter 1 starts with base workflow (3 nodes)
@@ -208,6 +220,7 @@ class TestTopologyAccumulation:
 # ---------------------------------------------------------------------------
 # Evolution log
 # ---------------------------------------------------------------------------
+
 
 class TestEvolutionLog:
     def test_log_populated_after_run(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
@@ -251,26 +264,31 @@ class TestEvolutionLog:
 # ComfyUI error handling
 # ---------------------------------------------------------------------------
 
+
 class TestErrorHandling:
-    def test_comfy_error_recorded_in_memory(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
+    def test_comfy_error_recorded_in_memory(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
         mock_client = MagicMock()
         mock_client.queue_prompt.return_value = {"prompt_id": "pid"}
         mock_client.wait_for_completion.return_value = {
             "error": "ComfyUI execution error: Float8_e4m3fn MPS issue"
         }
         cfg.max_iterations = 1
-        cfg.max_repair_attempts = 0          # disable repairs for this test
+        cfg.max_repair_attempts = 0  # disable repairs for this test
         h = _make_harness(minimal_workflow, cfg, client=mock_client)
         h.run("test")
         assert len(h.memory) == 1
         assert h.memory.attempts[0].verifier_score == 0.0
         assert "error" in h.memory.attempts[0].failed[0].lower()
 
-    def test_queue_exception_continues_loop(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
+    def test_queue_exception_continues_loop(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
         mock_client = MagicMock()
         mock_client.queue_prompt.side_effect = Exception("Connection refused")
         cfg.max_iterations = 1
-        cfg.max_repair_attempts = 0          # disable repairs for this test
+        cfg.max_repair_attempts = 0  # disable repairs for this test
         h = _make_harness(minimal_workflow, cfg, client=mock_client)
         result = h.run("test")
         assert result is None  # no image produced, but no crash
@@ -279,6 +297,7 @@ class TestErrorHandling:
 # ---------------------------------------------------------------------------
 # Repair loop
 # ---------------------------------------------------------------------------
+
 
 class TestRepairLoop:
     def test_queue_error_triggers_agent_repair(
@@ -390,8 +409,12 @@ class TestRepairLoop:
             return {"prompt_id": f"pid-{call_count['n']}"}
 
         completion_responses = [
-            {"error": "ComfyUI execution error: node 10 failed"},   # first attempt
-            {"outputs": {"7": {"images": [{"filename": "t.png", "subfolder": "", "type": "output"}]}}},  # repair
+            {"error": "ComfyUI execution error: node 10 failed"},  # first attempt
+            {
+                "outputs": {
+                    "7": {"images": [{"filename": "t.png", "subfolder": "", "type": "output"}]}
+                }
+            },  # repair
         ]
         completion_iter = iter(completion_responses)
 
@@ -409,7 +432,9 @@ class TestRepairLoop:
         # Agent: 1 normal + 1 execution repair = 2 calls
         assert h._agent.plan_and_patch.call_count == 2
 
-    def test_build_repair_feedback_content(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
+    def test_build_repair_feedback_content(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
         """_build_repair_feedback should include the error message and fix hints."""
         h = ClawHarness(minimal_workflow, cfg)
         fb = h._build_repair_feedback("vae slot mismatch", last_result=None)
@@ -424,8 +449,11 @@ class TestRepairLoop:
 # Context manager
 # ---------------------------------------------------------------------------
 
+
 class TestContextManager:
-    def test_context_manager_calls_start_stop(self, minimal_workflow: dict, cfg: HarnessConfig) -> None:
+    def test_context_manager_calls_start_stop(
+        self, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
         h = ClawHarness(minimal_workflow, cfg)
         h._sync = MagicMock()
         with h:
@@ -437,6 +465,7 @@ class TestContextManager:
 # from_workflow_file
 # ---------------------------------------------------------------------------
 
+
 class TestFromWorkflowFile:
     def test_loads_api_format(self, tmp_path, minimal_workflow: dict, cfg: HarnessConfig) -> None:
         wf_path = tmp_path / "wf.json"
@@ -444,7 +473,9 @@ class TestFromWorkflowFile:
         h = ClawHarness.from_workflow_file(str(wf_path), cfg)
         assert h.base_workflow == minimal_workflow
 
-    def test_loads_prompt_keyed_format(self, tmp_path, minimal_workflow: dict, cfg: HarnessConfig) -> None:
+    def test_loads_prompt_keyed_format(
+        self, tmp_path, minimal_workflow: dict, cfg: HarnessConfig
+    ) -> None:
         wf_path = tmp_path / "wf.json"
         wf_path.write_text(json.dumps({"prompt": minimal_workflow}))
         h = ClawHarness.from_workflow_file(str(wf_path), cfg)
@@ -455,10 +486,14 @@ class TestFromWorkflowFile:
 # Pinned image model
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def workflow_with_loader() -> dict:
     return {
-        "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "original_model.safetensors"}},
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "original_model.safetensors"},
+        },
         "2": {"class_type": "KSampler", "inputs": {"steps": 20, "model": ["1", 0]}},
         "3": {"class_type": "SaveImage", "inputs": {"images": ["2", 0]}},
     }
@@ -487,9 +522,7 @@ class TestPinnedImageModel:
         h = ClawHarness(workflow_with_loader, cfg)
         assert h.base_workflow["1"]["inputs"]["ckpt_name"] == "original_model.safetensors"
 
-    def test_pin_passed_to_agent(
-        self, workflow_with_loader: dict, cfg: HarnessConfig
-    ) -> None:
+    def test_pin_passed_to_agent(self, workflow_with_loader: dict, cfg: HarnessConfig) -> None:
         cfg.image_model = "Qwen/Qwen-Image-2512"
         h = ClawHarness(workflow_with_loader, cfg)
         assert h._agent.pinned_image_model == "Qwen/Qwen-Image-2512"

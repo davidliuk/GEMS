@@ -30,6 +30,7 @@ COMFYCLAW_EVOLVE_FROM_BEST  "true"/"false" for topology accumulation.
 COMFYCLAW_SYNC_PORT      WebSocket port (0 = disable).
 COMFYCLAW_SKILLS_DIR     Custom skills directory path.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,6 +43,7 @@ from pathlib import Path
 # ─────────────────────────────────────────────────────────────────────────────
 # .env loader — runs at import time so env vars are available everywhere
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _load_dotenv() -> None:
     """
@@ -68,6 +70,7 @@ _load_dotenv()
 # ─────────────────────────────────────────────────────────────────────────────
 # Typed config helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _require_env(name: str, hint: str = "") -> str:
     val = os.environ.get(name, "").strip()
@@ -118,7 +121,9 @@ def _env_score_weights(default: tuple[float, float] = (0.6, 0.4)) -> tuple[float
             return (parts[0], parts[1])
     except ValueError:
         pass
-    print(f"[cli] Warning: COMFYCLAW_SCORE_WEIGHTS={raw!r} invalid, using {default}.", file=sys.stderr)
+    print(
+        f"[cli] Warning: COMFYCLAW_SCORE_WEIGHTS={raw!r} invalid, using {default}.", file=sys.stderr
+    )
     return default
 
 
@@ -126,11 +131,12 @@ def _env_score_weights(default: tuple[float, float] = (0.6, 0.4)) -> tuple[float
 # Derived defaults
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _api_key() -> str:
     return _require_env(
         "ANTHROPIC_API_KEY",
         hint="Export it before running:\n  export ANTHROPIC_API_KEY=sk-ant-...\n"
-             "Or add it to your .env file (see .env.example).",
+        "Or add it to your .env file (see .env.example).",
     )
 
 
@@ -158,6 +164,7 @@ def _bundled_custom_node() -> Path:
 # ─────────────────────────────────────────────────────────────────────────────
 # Custom-node management
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _install_node(comfyui_dir: Path) -> None:
     """Symlink the ComfyClaw-Sync custom node into ComfyUI's custom_nodes/."""
@@ -189,9 +196,11 @@ def _install_node(comfyui_dir: Path) -> None:
 # ComfyUI startup helper
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _ensure_comfyui_running(addr: str) -> str:
     """Ping ComfyUI; try to open the Desktop app if not responding."""
     from .client import ComfyClient
+
     client = ComfyClient(addr)
     if client.is_alive():
         print(f"[cli] ComfyUI is UP at http://{addr}")
@@ -202,7 +211,8 @@ def _ensure_comfyui_running(addr: str) -> str:
     try:
         subprocess.Popen(
             ["open", str(app_path)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
     except Exception as exc:
         print(f"[cli] Could not open ComfyUI: {exc}")
@@ -210,6 +220,7 @@ def _ensure_comfyui_running(addr: str) -> str:
 
     print("[cli] Waiting up to 60 s for ComfyUI to start…")
     from .client import ComfyClient as CC
+
     for port in (8188, 8000):
         probe_addr = f"127.0.0.1:{port}"
         probe = CC(probe_addr)
@@ -234,6 +245,7 @@ def _save_image(image_bytes: bytes, prompt: str, output_dir: Path) -> Path:
 # ─────────────────────────────────────────────────────────────────────────────
 # Sub-command handlers
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 def _cmd_run(args: argparse.Namespace, dry: bool = False) -> None:
     from .harness import ClawHarness, HarnessConfig
@@ -293,6 +305,7 @@ def _cmd_node_path(_args: argparse.Namespace) -> None:
 # Argument parser
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="comfyclaw",
@@ -306,36 +319,48 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     def _add_run_args(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--workflow", required=True, metavar="PATH",
-                       help="Path to API-format ComfyUI workflow JSON")
-        p.add_argument("--prompt", required=True,
-                       help="Image generation prompt")
-        p.add_argument("--model",
-                       default=_env_str("COMFYCLAW_MODEL", "claude-sonnet-4-5"),
-                       metavar="NAME")
-        p.add_argument("--iterations", type=int,
-                       default=_env_int("COMFYCLAW_MAX_ITERATIONS", 3),
-                       metavar="N")
-        p.add_argument("--threshold", type=float,
-                       default=_env_float("COMFYCLAW_THRESHOLD", 0.85),
-                       metavar="SCORE")
-        p.add_argument("--sync-port", type=int,
-                       default=_env_int("COMFYCLAW_SYNC_PORT", 8765),
-                       metavar="PORT")
-        p.add_argument("--no-sync", action="store_true",
-                       help="Disable live WebSocket sync")
-        p.add_argument("--skills-dir",
-                       default=os.environ.get("COMFYCLAW_SKILLS_DIR") or None,
-                       metavar="DIR")
-        p.add_argument("--reset-each-iter", action="store_true",
-                       default=not _env_bool("COMFYCLAW_EVOLVE_FROM_BEST", True),
-                       help="Disable topology accumulation (reset to base each iteration)")
-        p.add_argument("--max-repair-attempts", type=int,
-                       default=_env_int("COMFYCLAW_MAX_REPAIR_ATTEMPTS", 2),
-                       metavar="N",
-                       help="Max agent repair attempts when ComfyUI rejects a workflow (default 2)")
-        p.add_argument("--output-dir", default=None, metavar="DIR",
-                       help="Directory for saved output images")
+        p.add_argument(
+            "--workflow",
+            required=True,
+            metavar="PATH",
+            help="Path to API-format ComfyUI workflow JSON",
+        )
+        p.add_argument("--prompt", required=True, help="Image generation prompt")
+        p.add_argument(
+            "--model", default=_env_str("COMFYCLAW_MODEL", "claude-sonnet-4-5"), metavar="NAME"
+        )
+        p.add_argument(
+            "--iterations", type=int, default=_env_int("COMFYCLAW_MAX_ITERATIONS", 3), metavar="N"
+        )
+        p.add_argument(
+            "--threshold",
+            type=float,
+            default=_env_float("COMFYCLAW_THRESHOLD", 0.85),
+            metavar="SCORE",
+        )
+        p.add_argument(
+            "--sync-port", type=int, default=_env_int("COMFYCLAW_SYNC_PORT", 8765), metavar="PORT"
+        )
+        p.add_argument("--no-sync", action="store_true", help="Disable live WebSocket sync")
+        p.add_argument(
+            "--skills-dir", default=os.environ.get("COMFYCLAW_SKILLS_DIR") or None, metavar="DIR"
+        )
+        p.add_argument(
+            "--reset-each-iter",
+            action="store_true",
+            default=not _env_bool("COMFYCLAW_EVOLVE_FROM_BEST", True),
+            help="Disable topology accumulation (reset to base each iteration)",
+        )
+        p.add_argument(
+            "--max-repair-attempts",
+            type=int,
+            default=_env_int("COMFYCLAW_MAX_REPAIR_ATTEMPTS", 2),
+            metavar="N",
+            help="Max agent repair attempts when ComfyUI rejects a workflow (default 2)",
+        )
+        p.add_argument(
+            "--output-dir", default=None, metavar="DIR", help="Directory for saved output images"
+        )
         p.add_argument(
             "--image-model",
             default=os.environ.get("COMFYCLAW_IMAGE_MODEL", "").strip() or None,
@@ -356,14 +381,16 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_run_args(dry_p)
     dry_p.set_defaults(func=lambda a: _cmd_run(a, dry=True))
 
-    inst_p = sub.add_parser("install-node",
-                             help="Symlink ComfyClaw-Sync custom node into ComfyUI")
-    inst_p.add_argument("--comfyui-dir", default=None, metavar="DIR",
-                        help="ComfyUI installation directory (or set COMFYUI_DIR in .env)")
+    inst_p = sub.add_parser("install-node", help="Symlink ComfyClaw-Sync custom node into ComfyUI")
+    inst_p.add_argument(
+        "--comfyui-dir",
+        default=None,
+        metavar="DIR",
+        help="ComfyUI installation directory (or set COMFYUI_DIR in .env)",
+    )
     inst_p.set_defaults(func=_cmd_install_node)
 
-    np_p = sub.add_parser("node-path",
-                           help="Print path to the bundled ComfyClaw-Sync plugin")
+    np_p = sub.add_parser("node-path", help="Print path to the bundled ComfyClaw-Sync plugin")
     np_p.set_defaults(func=_cmd_node_path)
 
     return parser

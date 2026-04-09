@@ -4,6 +4,7 @@ ComfyClient — thin HTTP client for the ComfyUI REST API.
 All network operations live here. Nothing else in the package should
 call urllib or requests directly.
 """
+
 from __future__ import annotations
 
 import json
@@ -150,7 +151,5 @@ class ComfyClient:
         images: list[bytes] = []
         for node_output in history_entry.get("outputs", {}).values():
             for img in node_output.get("images", []):
-                images.append(
-                    self.get_image(img["filename"], img["subfolder"], img["type"])
-                )
+                images.append(self.get_image(img["filename"], img["subfolder"], img["type"]))
         return images

@@ -11,6 +11,7 @@ The API format is a flat dict keyed by string node IDs:
 Link references are ``[src_node_id_str, output_slot_index]`` tuples stored
 directly in the destination node's ``inputs`` dict.
 """
+
 from __future__ import annotations
 
 import copy
@@ -52,7 +53,7 @@ class WorkflowManager:
         return (
             isinstance(value, list)
             and len(value) == 2
-            and isinstance(value[0], (str, int))
+            and isinstance(value[0], str | int)
             and isinstance(value[1], int)
         )
 
@@ -174,11 +175,7 @@ class WorkflowManager:
 
     def get_nodes_by_class(self, class_type: str) -> list[str]:
         """Return node IDs whose ``class_type`` matches *class_type*."""
-        return [
-            nid
-            for nid, node in self.workflow.items()
-            if node.get("class_type") == class_type
-        ]
+        return [nid for nid, node in self.workflow.items() if node.get("class_type") == class_type]
 
     def get_node_by_title(self, title: str) -> str | None:
         """Return the first node ID whose ``_meta.title`` matches, or None."""
@@ -266,7 +263,7 @@ class WorkflowManager:
                     v_s = repr(v) if isinstance(v, str) else json.dumps(v)
                     inputs_repr.append(f"{k}={v_s}")
             lines.append(
-                f"  [{nid}] {title} ({node.get('class_type','?')})"
+                f"  [{nid}] {title} ({node.get('class_type', '?')})"
                 + (f"  {', '.join(inputs_repr)}" if inputs_repr else "")
             )
         return "\n".join(lines)

@@ -1,6 +1,7 @@
 """
 Shared pytest fixtures for ComfyClaw tests.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -64,10 +65,10 @@ def wm(minimal_workflow: dict) -> WorkflowManager:
 def png_bytes() -> bytes:
     """Minimal valid 1×1 white PNG."""
     return (
-        b"\x89PNG\r\n\x1a\n"          # PNG magic
-        b"\x00\x00\x00\rIHDR"         # IHDR chunk
-        b"\x00\x00\x00\x01"           # width=1
-        b"\x00\x00\x00\x01"           # height=1
+        b"\x89PNG\r\n\x1a\n"  # PNG magic
+        b"\x00\x00\x00\rIHDR"  # IHDR chunk
+        b"\x00\x00\x00\x01"  # width=1
+        b"\x00\x00\x00\x01"  # height=1
         b"\x08\x02\x00\x00\x00\x90wS\xde"  # bit depth, color type, CRC
         b"\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
         b"\x00\x00\x00\x00IEND\xaeB`\x82"

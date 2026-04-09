@@ -1,4 +1,5 @@
 """Unit tests for ClawMemory."""
+
 from __future__ import annotations
 
 from comfyclaw.memory import ClawMemory

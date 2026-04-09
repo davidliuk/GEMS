@@ -1,0 +1,21 @@
+# Pre-commit hooks — run automatically on every `git commit`.
+#
+# Install once per clone:
+#   uv run pre-commit install
+#
+# Run manually on all files:
+#   uv run pre-commit run --all-files
+#
+# Skip for a single emergency commit:
+#   git commit --no-verify -m "..."  (use sparingly)
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Keep in sync with the version in pyproject.toml / uv.lock
+    rev: v0.11.4
+    hooks:
+      # 1. Fix auto-fixable lint issues (import order, unused f-strings, …)
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      # 2. Auto-format code style (quotes, indentation, trailing commas)
+      - id: ruff-format

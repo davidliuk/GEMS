@@ -4,6 +4,7 @@ ClawMemory — short-term per-run attempt history.
 Stores workflow snapshots, verifier scores, and compressed lessons so the
 agent can avoid repeating mistakes across iterations within a single run.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,10 +14,10 @@ from dataclasses import dataclass, field
 class Attempt:
     iteration: int
     workflow_snapshot: dict
-    verifier_score: float       # 0.0 – 1.0
+    verifier_score: float  # 0.0 – 1.0
     passed: list[str]
     failed: list[str]
-    experience: str             # ≤80-word compressed lesson
+    experience: str  # ≤80-word compressed lesson
     image_bytes: bytes | None = field(default=None, repr=False)
 
 

@@ -6,6 +6,7 @@ ComfyClaw-Sync ComfyUI extension).
 Runs in a background daemon thread using its own asyncio event loop so it
 never blocks the main harness loop.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +20,7 @@ log = logging.getLogger(__name__)
 try:
     import websockets
     import websockets.server
+
     _WS_AVAILABLE = True
 except ImportError:
     _WS_AVAILABLE = False
@@ -141,6 +143,7 @@ class SyncServer:
 
     async def _async_broadcast(self, payload: str, clients: set[Any]) -> None:
         import websockets.exceptions
+
         for ws in clients:
             try:
                 await ws.send(payload)

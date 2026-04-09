@@ -1,4 +1,5 @@
 """Unit tests for WorkflowManager."""
+
 from __future__ import annotations
 
 import pytest
@@ -139,18 +140,28 @@ class TestClone:
 
 class TestApplyImageModel:
     def test_updates_checkpoint_loader(self) -> None:
-        wm = WorkflowManager({
-            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "old_model.safetensors"}},
-        })
+        wm = WorkflowManager(
+            {
+                "1": {
+                    "class_type": "CheckpointLoaderSimple",
+                    "inputs": {"ckpt_name": "old_model.safetensors"},
+                },
+            }
+        )
         updated = wm.apply_image_model("new_model.safetensors")
         assert len(updated) == 1
         assert updated[0] == ("1", "ckpt_name")
         assert wm.workflow["1"]["inputs"]["ckpt_name"] == "new_model.safetensors"
 
     def test_updates_unet_loader(self) -> None:
-        wm = WorkflowManager({
-            "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "old.pt", "weight_dtype": "default"}},
-        })
+        wm = WorkflowManager(
+            {
+                "2": {
+                    "class_type": "UNETLoader",
+                    "inputs": {"unet_name": "old.pt", "weight_dtype": "default"},
+                },
+            }
+        )
         updated = wm.apply_image_model("Qwen/Qwen-Image-2512")
         assert updated[0] == ("2", "unet_name")
         assert wm.workflow["2"]["inputs"]["unet_name"] == "Qwen/Qwen-Image-2512"
@@ -158,35 +169,49 @@ class TestApplyImageModel:
         assert wm.workflow["2"]["inputs"]["weight_dtype"] == "default"
 
     def test_updates_multiple_loaders(self) -> None:
-        wm = WorkflowManager({
-            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "a.safetensors"}},
-            "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "b.pt"}},
-        })
+        wm = WorkflowManager(
+            {
+                "1": {
+                    "class_type": "CheckpointLoaderSimple",
+                    "inputs": {"ckpt_name": "a.safetensors"},
+                },
+                "2": {"class_type": "UNETLoader", "inputs": {"unet_name": "b.pt"}},
+            }
+        )
         updated = wm.apply_image_model("target_model.safetensors")
         assert len(updated) == 2
         assert wm.workflow["1"]["inputs"]["ckpt_name"] == "target_model.safetensors"
         assert wm.workflow["2"]["inputs"]["unet_name"] == "target_model.safetensors"
 
     def test_ignores_lora_loader(self) -> None:
-        wm = WorkflowManager({
-            "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "base.safetensors"}},
-            "2": {"class_type": "LoraLoader", "inputs": {"lora_name": "style.safetensors"}},
-        })
+        wm = WorkflowManager(
+            {
+                "1": {
+                    "class_type": "CheckpointLoaderSimple",
+                    "inputs": {"ckpt_name": "base.safetensors"},
+                },
+                "2": {"class_type": "LoraLoader", "inputs": {"lora_name": "style.safetensors"}},
+            }
+        )
         updated = wm.apply_image_model("new_base.safetensors")
         assert len(updated) == 1  # only the checkpoint, not the LoRA
         assert wm.workflow["2"]["inputs"]["lora_name"] == "style.safetensors"
 
     def test_returns_empty_when_no_loaders(self) -> None:
-        wm = WorkflowManager({
-            "1": {"class_type": "KSampler", "inputs": {"steps": 20}},
-        })
+        wm = WorkflowManager(
+            {
+                "1": {"class_type": "KSampler", "inputs": {"steps": 20}},
+            }
+        )
         updated = wm.apply_image_model("any_model.safetensors")
         assert updated == []
 
     def test_creates_inputs_dict_if_missing(self) -> None:
-        wm = WorkflowManager({
-            "1": {"class_type": "CheckpointLoaderSimple"},
-        })
+        wm = WorkflowManager(
+            {
+                "1": {"class_type": "CheckpointLoaderSimple"},
+            }
+        )
         wm.apply_image_model("fresh_model.safetensors")
         assert wm.workflow["1"]["inputs"]["ckpt_name"] == "fresh_model.safetensors"
 

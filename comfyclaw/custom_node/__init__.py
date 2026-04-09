@@ -36,6 +36,7 @@ using ``window.location.hostname`` so it works correctly whether you access
 ComfyUI locally or over a remote tunnel.  You can override the URL by setting
 ``localStorage.setItem('comfyclaw_ws_url', 'ws://...')`` in the browser console.
 """
+
 from __future__ import annotations
 
 import os

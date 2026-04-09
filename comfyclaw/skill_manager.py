@@ -18,6 +18,7 @@ Usage::
     body = sm.get_body("lora-enhancement")    # → instructions string
     relevant = sm.detect_relevant_skills("photorealistic fox") # → [name, …]
 """
+
 from __future__ import annotations
 
 import html
@@ -187,7 +188,10 @@ class SkillManager:
             except ValueError as exc:
                 # Don't crash — warn and skip malformed skills
                 import warnings
-                warnings.warn(f"[SkillManager] Skipping skill {skill_dir.name}: {exc}", stacklevel=2)
+
+                warnings.warn(
+                    f"[SkillManager] Skipping skill {skill_dir.name}: {exc}", stacklevel=2
+                )
 
     # ------------------------------------------------------------------
     # Public API

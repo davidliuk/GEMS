@@ -27,14 +27,16 @@ def parse_skill_md(skill_path: Path) -> tuple[str, str, str]:
     while i < len(frontmatter_lines):
         line = frontmatter_lines[i]
         if line.startswith("name:"):
-            name = line[len("name:"):].strip().strip('"').strip("'")
+            name = line[len("name:") :].strip().strip('"').strip("'")
         elif line.startswith("description:"):
-            value = line[len("description:"):].strip()
+            value = line[len("description:") :].strip()
             # Handle YAML multiline indicators (>, |, >-, |-)
             if value in (">", "|", ">-", "|-"):
                 continuation_lines: list[str] = []
                 i += 1
-                while i < len(frontmatter_lines) and (frontmatter_lines[i].startswith("  ") or frontmatter_lines[i].startswith("\t")):
+                while i < len(frontmatter_lines) and (
+                    frontmatter_lines[i].startswith("  ") or frontmatter_lines[i].startswith("\t")
+                ):
                     continuation_lines.append(frontmatter_lines[i].strip())
                     i += 1
                 description = " ".join(continuation_lines)

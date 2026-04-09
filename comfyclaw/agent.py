@@ -14,6 +14,7 @@ Regional    : add_regional_attention
 Refinement  : add_hires_fix, add_inpaint_pass
 Control     : report_evolution_strategy, finalize_workflow
 """
+
 from __future__ import annotations
 
 import copy
@@ -116,6 +117,7 @@ def _build_system_prompt(
     if pinned_image_model:
         prompt += _PINNED_MODEL_SECTION.format(model_name=pinned_image_model)
     return prompt
+
 
 # ---------------------------------------------------------------------------
 # Tool definitions
@@ -229,7 +231,12 @@ _TOOLS: list[dict] = [
                 "start_percent": {"type": "number"},
                 "end_percent": {"type": "number"},
             },
-            "required": ["controlnet_name", "preprocessor_class", "positive_node_id", "negative_node_id"],
+            "required": [
+                "controlnet_name",
+                "preprocessor_class",
+                "positive_node_id",
+                "negative_node_id",
+            ],
         },
     },
     {
@@ -247,7 +254,12 @@ _TOOLS: list[dict] = [
                 "background_prompt": {"type": "string"},
                 "foreground_weight": {"type": "number"},
             },
-            "required": ["positive_node_id", "clip_node_id", "foreground_prompt", "background_prompt"],
+            "required": [
+                "positive_node_id",
+                "clip_node_id",
+                "foreground_prompt",
+                "background_prompt",
+            ],
         },
     },
     {
@@ -283,9 +295,12 @@ _TOOLS: list[dict] = [
                 "save_image_node_id": {"type": "string"},
             },
             "required": [
-                "region_description", "inpaint_prompt",
-                "base_ksampler_node_id", "positive_node_id",
-                "clip_node_id", "vae_node_id",
+                "region_description",
+                "inpaint_prompt",
+                "base_ksampler_node_id",
+                "positive_node_id",
+                "clip_node_id",
+                "vae_node_id",
             ],
         },
     },
@@ -427,11 +442,13 @@ class ClawAgent:
                 if block.type != "tool_use":
                     continue
                 result_text, should_stop = self._dispatch(block.name, block.input, workflow_manager)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result_text,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result_text,
+                    }
+                )
                 if should_stop:
                     rationale = block.input.get("rationale", rationale)
                     done = True
@@ -446,9 +463,7 @@ class ClawAgent:
     # Tool dispatcher
     # ------------------------------------------------------------------
 
-    def _dispatch(
-        self, name: str, inputs: dict, wm: WorkflowManager
-    ) -> tuple[str, bool]:
+    def _dispatch(self, name: str, inputs: dict, wm: WorkflowManager) -> tuple[str, bool]:
         """Route a single tool call. Returns ``(result_text, should_stop)``."""
         try:
             match name:
@@ -461,7 +476,10 @@ class ClawAgent:
                 case "set_param":
                     wm.set_param(str(inputs["node_id"]), inputs["param_name"], inputs["value"])
                     self._notify(wm)
-                    return f"✅ Node {inputs['node_id']}: {inputs['param_name']} = {json.dumps(inputs['value'])}", False
+                    return (
+                        f"✅ Node {inputs['node_id']}: {inputs['param_name']} = {json.dumps(inputs['value'])}",
+                        False,
+                    )
 
                 case "add_node":
                     nid = wm.add_node(
@@ -481,7 +499,7 @@ class ClawAgent:
                     )
                     self._notify(wm)
                     return (
-                        f"✅ Connected {inputs['src_node_id']}[{inputs.get('src_output_index',0)}]"
+                        f"✅ Connected {inputs['src_node_id']}[{inputs.get('src_output_index', 0)}]"
                         f" → {inputs['dst_node_id']}.{inputs['dst_input_name']}"
                     ), False
 
@@ -513,7 +531,7 @@ class ClawAgent:
                     return "Strategy noted.", False
 
                 case "finalize_workflow":
-                    print(f"[ClawAgent] 🎯 {inputs.get('rationale','')}")
+                    print(f"[ClawAgent] 🎯 {inputs.get('rationale', '')}")
                     return "Workflow finalized.", True
 
                 case "read_skill":
@@ -542,10 +560,7 @@ class ClawAgent:
             body = self.skill_manager.get_body(skill_name)
         except KeyError:
             available = ", ".join(self.skill_manager.skill_names)
-            return (
-                f"❌ Skill {skill_name!r} not found. "
-                f"Available skills: {available or '(none)'}"
-            )
+            return f"❌ Skill {skill_name!r} not found. Available skills: {available or '(none)'}"
         print(f"[ClawAgent] 📖 read_skill: {skill_name}")
         return f"## Instructions for skill: {skill_name}\n\n{body}"
 
@@ -601,7 +616,9 @@ class ClawAgent:
         start_pct = float(inputs.get("start_percent", 0.0))
         end_pct = float(inputs.get("end_percent", 1.0))
 
-        cn_loader_nid = wm.add_node("ControlNetLoader", f"CN: {cn_name[:25]}", control_net_name=cn_name)
+        cn_loader_nid = wm.add_node(
+            "ControlNetLoader", f"CN: {cn_name[:25]}", control_net_name=cn_name
+        )
 
         preproc_output = None
         if preproc_cls and image_nid:
@@ -658,16 +675,22 @@ class ClawAgent:
             meta["title"] = "Regional Prompt (BREAK)"
             wm.workflow[pos_nid]["inputs"]["text"] = f"{fg_prompt} BREAK {bg_prompt}"
 
-        fg_nid = wm.add_node("CLIPTextEncode", "Foreground Prompt", clip=[clip_nid, 0], text=fg_prompt)
-        bg_nid = wm.add_node("CLIPTextEncode", "Background Prompt", clip=[clip_nid, 0], text=bg_prompt)
+        fg_nid = wm.add_node(
+            "CLIPTextEncode", "Foreground Prompt", clip=[clip_nid, 0], text=fg_prompt
+        )
+        bg_nid = wm.add_node(
+            "CLIPTextEncode", "Background Prompt", clip=[clip_nid, 0], text=bg_prompt
+        )
         avg_nid = wm.add_node(
-            "ConditioningAverage", "FG Weight",
+            "ConditioningAverage",
+            "FG Weight",
             conditioning_to=[fg_nid, 0],
             conditioning_from=[pos_nid, 0],
             conditioning_to_strength=fg_weight,
         )
         combine_nid = wm.add_node(
-            "ConditioningCombine", "Regional Combine",
+            "ConditioningCombine",
+            "Regional Combine",
             conditioning_1=[avg_nid, 0],
             conditioning_2=[bg_nid, 0],
         )
@@ -677,8 +700,7 @@ class ClawAgent:
 
         self._notify(wm)
         return (
-            f"✅ Regional attention: FG={fg_nid}, BG={bg_nid}, "
-            f"Avg={avg_nid}, Combine={combine_nid}"
+            f"✅ Regional attention: FG={fg_nid}, BG={bg_nid}, Avg={avg_nid}, Combine={combine_nid}"
         )
 
     def _add_hires_fix(self, wm: WorkflowManager, inputs: dict) -> str:
@@ -703,7 +725,8 @@ class ClawAgent:
             vae_connection = [vae_nid, 0]
 
         upscale_nid = wm.add_node(
-            "LatentUpscaleBy", "Hires Upscale",
+            "LatentUpscaleBy",
+            "Hires Upscale",
             samples=[base_ks_nid, 0],
             upscale_method=method,
             scale_by=scale_by,
@@ -713,10 +736,16 @@ class ClawAgent:
         base_inputs["steps"] = hires_steps
         base_inputs["denoise"] = hires_denoise
         hires_ks_nid = wm.add_node("KSampler", "KSampler (Hires)", **base_inputs)
-        decode_nid = wm.add_node("VAEDecode", "VAEDecode (Hires)", samples=[hires_ks_nid, 0], vae=vae_connection)
+        decode_nid = wm.add_node(
+            "VAEDecode", "VAEDecode (Hires)", samples=[hires_ks_nid, 0], vae=vae_connection
+        )
 
-        target = save_nid if save_nid in wm.workflow else next(
-            (nid for nid, n in wm.workflow.items() if n.get("class_type") == "SaveImage"), None
+        target = (
+            save_nid
+            if save_nid in wm.workflow
+            else next(
+                (nid for nid, n in wm.workflow.items() if n.get("class_type") == "SaveImage"), None
+            )
         )
         if target:
             wm.workflow[target]["inputs"]["images"] = [decode_nid, 0]
@@ -737,8 +766,10 @@ class ClawAgent:
         save_nid = str(inputs.get("save_image_node_id", ""))
 
         ip_pos_nid = wm.add_node(
-            "CLIPTextEncode", f"Inpaint Prompt ({region[:20]})",
-            clip=[clip_nid, 0], text=prompt_text,
+            "CLIPTextEncode",
+            f"Inpaint Prompt ({region[:20]})",
+            clip=[clip_nid, 0],
+            text=prompt_text,
         )
         base_inp = copy.deepcopy(wm.workflow.get(base_ks_nid, {}).get("inputs", {}))
         base_inp["positive"] = [ip_pos_nid, 0]
@@ -758,10 +789,16 @@ class ClawAgent:
         )
 
         ip_ks_nid = wm.add_node("KSampler", f"KSampler Inpaint ({region[:20]})", **base_inp)
-        ip_decode_nid = wm.add_node("VAEDecode", "VAEDecode Inpaint", samples=[ip_ks_nid, 0], vae=vae_connection)
+        ip_decode_nid = wm.add_node(
+            "VAEDecode", "VAEDecode Inpaint", samples=[ip_ks_nid, 0], vae=vae_connection
+        )
 
-        target = save_nid if save_nid in wm.workflow else next(
-            (nid for nid, n in wm.workflow.items() if n.get("class_type") == "SaveImage"), None
+        target = (
+            save_nid
+            if save_nid in wm.workflow
+            else next(
+                (nid for nid, n in wm.workflow.items() if n.get("class_type") == "SaveImage"), None
+            )
         )
         if target:
             wm.workflow[target]["inputs"]["images"] = [ip_decode_nid, 0]
@@ -778,34 +815,30 @@ class ClawAgent:
 
     def _query_models(self, model_type: str) -> str:
         type_map = {
-            "loras":          ("LoraLoader",             "lora_name"),
-            "controlnets":    ("ControlNetLoader",       "control_net_name"),
-            "checkpoints":    ("CheckpointLoaderSimple", "ckpt_name"),
-            "unets":          ("UNETLoader",             "unet_name"),
-            "vae":            ("VAELoader",              "vae_name"),
-            "upscale_models": ("UpscaleModelLoader",     "model_name"),
-            "clip_vision":    ("CLIPVisionLoader",       "clip_name"),
+            "loras": ("LoraLoader", "lora_name"),
+            "controlnets": ("ControlNetLoader", "control_net_name"),
+            "checkpoints": ("CheckpointLoaderSimple", "ckpt_name"),
+            "unets": ("UNETLoader", "unet_name"),
+            "vae": ("VAELoader", "vae_name"),
+            "upscale_models": ("UpscaleModelLoader", "model_name"),
+            "clip_vision": ("CLIPVisionLoader", "clip_name"),
         }
         entry = type_map.get(model_type.lower())
         if not entry:
             return f"❌ Unknown model_type {model_type!r}. Valid: {list(type_map)}"
         node_class, param = entry
         try:
-            url = (
-                f"http://{self.server_address}/object_info/"
-                f"{urllib.parse.quote(node_class)}"
-            )
+            url = f"http://{self.server_address}/object_info/{urllib.parse.quote(node_class)}"
             with urllib.request.urlopen(url, timeout=8) as r:
                 data = json.loads(r.read())
             models = (
-                data.get(node_class, {})
-                    .get("input", {})
-                    .get("required", {})
-                    .get(param, [[]])[0]
+                data.get(node_class, {}).get("input", {}).get("required", {}).get(param, [[]])[0]
             )
             if not models:
                 return f"No {model_type} found (ComfyUI returned empty list)."
-            return f"Available {model_type} ({len(models)}):\n" + "\n".join(f"  - {m}" for m in models)
+            return f"Available {model_type} ({len(models)}):\n" + "\n".join(
+                f"  - {m}" for m in models
+            )
         except Exception as exc:
             return f"❌ Could not query {model_type}: {exc}"
 
@@ -864,7 +897,9 @@ class ClawAgent:
         )
 
         if is_qwen:
-            parts.append("## Active Model\n`Qwen-Image-2512` (custom pipeline — no KSampler/ControlNet/LoRA)")
+            parts.append(
+                "## Active Model\n`Qwen-Image-2512` (custom pipeline — no KSampler/ControlNet/LoRA)"
+            )
         elif active_model:
             parts.append(f"## Active Model\n`{active_model}`")
 
@@ -887,8 +922,8 @@ class ClawAgent:
             parts.append(
                 f"## Suggested Skills\nThese skills may be relevant: {hint}\n"
                 "Call read_skill(<name>) to load full instructions before applying.\n"
-                "**If the active model is an LCM variant, read_skill(\"dreamshaper8-lcm\") FIRST.**\n"
-                "**If the workflow contains QwenImageModelLoader, read_skill(\"qwen-image-2512\") FIRST.**"
+                '**If the active model is an LCM variant, read_skill("dreamshaper8-lcm") FIRST.**\n'
+                '**If the workflow contains QwenImageModelLoader, read_skill("qwen-image-2512") FIRST.**'
             )
 
         if verifier_feedback:
