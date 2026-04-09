@@ -404,7 +404,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.25" },
     { name = "comfyclaw", extras = ["sync"], marker = "extra == 'all'" },
     { name = "litellm", specifier = ">=1.0" },
-    { name = "pillow", specifier = ">=12.2.0" },
+    { name = "pillow", specifier = ">=10" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "websockets", marker = "extra == 'sync'", specifier = ">=12" },

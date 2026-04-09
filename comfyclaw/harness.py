@@ -67,8 +67,10 @@ class HarnessConfig:
     evolve_from_best      : Start each iteration from the best previous workflow.
     max_images            : Max images kept in RAM across attempts (see ClawMemory).
     score_weights         : ``(req_weight, detail_weight)`` for verifier score blend.
-    image_model           : Pin the ComfyUI checkpoint / UNET to this name, e.g.
-                            ``"Qwen/Qwen-Image-2512"``.  ``None`` leaves the
+    image_model           : Pin the ComfyUI checkpoint / UNET to this name.
+                            Must be the **exact filename** as reported by ComfyUI
+                            (e.g. ``"qwen_image_2512_fp8_e4m3fn.safetensors"``),
+                            not a HuggingFace-style path.  ``None`` leaves the
                             workflow's existing model untouched.
     max_repair_attempts   : When ComfyUI rejects a workflow (HTTP 4xx / execution
                             error), the agent gets up to this many chances to
@@ -99,8 +101,8 @@ class HarnessConfig:
 
     Examples::
 
-        image_model = "Qwen/Qwen-Image-2512"          # HuggingFace-style path
-        image_model = "realisticVisionV51.safetensors" # local .safetensors file
+        image_model = "qwen_image_2512_fp8_e4m3fn.safetensors"  # exact ComfyUI filename
+        image_model = "realisticVisionV51.safetensors"           # local checkpoint
         image_model = None   # do not override — use whatever the workflow has
     """
 
@@ -165,6 +167,19 @@ class ClawHarness:
         # Apply any pinned image model to the base workflow immediately,
         # so it is the starting point for every iteration.
         if config.image_model:
+            # Warn early if the value looks like a HuggingFace path rather than
+            # a ComfyUI filename — ComfyUI only accepts exact filenames and will
+            # return HTTP 400 otherwise.
+            im = config.image_model
+            if "/" in im and not any(
+                im.endswith(ext) for ext in (".safetensors", ".ckpt", ".pt", ".gguf", ".bin")
+            ):
+                log.warning(
+                    "image_model=%r looks like a HuggingFace path, not a ComfyUI filename. "
+                    "ComfyUI requires the exact local filename (e.g. 'qwen_image_2512_fp8_e4m3fn.safetensors'). "
+                    "The workflow submission will likely fail with HTTP 400.",
+                    im,
+                )
             wm = WorkflowManager(self.base_workflow)
             updated = wm.apply_image_model(config.image_model)
             self.base_workflow = wm.workflow
@@ -264,6 +279,16 @@ class ClawHarness:
                 start_wf = copy.deepcopy(self.base_workflow)
 
             wm = WorkflowManager(start_wf)
+
+            # Seed the user's prompt into every CLIPTextEncode-family node
+            # connected to a sampler's positive input.  This ensures the
+            # correct subject matter is always present regardless of what the
+            # base workflow has hard-coded, and gives the agent a meaningful
+            # starting point rather than a stale placeholder.
+            pos_injected, _ = wm.inject_prompt(positive=prompt)
+            if pos_injected:
+                print(f"[ClawHarness] 📝 Seeded user prompt into encoder node(s) {pos_injected}")
+
             node_ids_before = set(wm.workflow.keys())
 
             # ── Agent evolves the workflow ─────────────────────────────────
