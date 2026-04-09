@@ -32,7 +32,7 @@ class SyncServer:
     host : Bind address (default ``"127.0.0.1"``).
     """
 
-    def __init__(self, port: int = 8765, host: str = "127.0.0.1") -> None:
+    def __init__(self, port: int = 8765, host: str = "0.0.0.0") -> None:
         self.port = port
         self.host = host
 

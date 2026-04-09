@@ -17,7 +17,7 @@
 
 import { app } from "../../scripts/app.js";
 
-const DEFAULT_WS_URL       = "ws://127.0.0.1:8765";
+const DEFAULT_WS_URL       = `ws://${window.location.hostname}:8765`;
 const RECONNECT_DELAY_MS   = 3000;
 const MAX_RECONNECT_ATTEMPTS = 20;
 

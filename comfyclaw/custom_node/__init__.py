@@ -28,6 +28,13 @@ The Python SyncServer pushes JSON messages over WebSocket::
 The JS extension receives ``workflow``, converts it to LiteGraph format, and
 reloads the canvas.  A status badge in the bottom-right corner shows
 🟢 live / 🔴 disconnected / ✨ updated.
+
+WebSocket URL resolution
+------------------------
+The JS client connects to ``ws://<server_hostname>:8765`` by default,
+using ``window.location.hostname`` so it works correctly whether you access
+ComfyUI locally or over a remote tunnel.  You can override the URL by setting
+``localStorage.setItem('comfyclaw_ws_url', 'ws://...')`` in the browser console.
 """
 from __future__ import annotations
 
