@@ -117,7 +117,7 @@ The plugin is bundled inside the package.  Install it once, then restart ComfyUI
 comfyclaw install-node
 
 # With an explicit ComfyUI path
-comfyclaw install-node --comfyui-dir ~/Documents/ComfyUI
+uv run comfyclaw install-node --comfyui-dir /fs/nexus-scratch/zli12321/comfy-testing/ComfyUI
 
 # Via environment variable
 export COMFYUI_DIR=~/Documents/ComfyUI
