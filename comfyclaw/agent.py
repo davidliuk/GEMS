@@ -33,6 +33,24 @@ import litellm
 from .skill_manager import SkillManager
 from .workflow import WorkflowManager
 
+
+def _abbreviate_tool_args(tool_name: str, args: dict) -> dict:
+    """Return a small dict suitable for the thinking-log UI.
+
+    Large values (e.g. full skill text, long prompts) are truncated so we
+    don't flood the WebSocket channel.
+    """
+    MAX_VAL = 120
+    out: dict = {}
+    for k, v in args.items():
+        if isinstance(v, str) and len(v) > MAX_VAL:
+            out[k] = v[:MAX_VAL] + "…"
+        elif isinstance(v, dict) and len(json.dumps(v)) > MAX_VAL:
+            out[k] = "{…}"
+        else:
+            out[k] = v
+    return out
+
 # ---------------------------------------------------------------------------
 # System prompt
 # ---------------------------------------------------------------------------
@@ -503,6 +521,7 @@ class ClawAgent:
         self.server_address = server_address
         self.skill_manager = SkillManager(skills_dir)
         self.on_change = on_change
+        self.on_agent_event: Callable[[str, str, str, dict | None], None] | None = None
         self.max_tool_rounds = max_tool_rounds
         self.pinned_image_model = pinned_image_model
 
@@ -547,6 +566,8 @@ class ClawAgent:
         rationale = "(no rationale provided)"
         rounds = 0
 
+        self._emit_event("info", f"Starting agent loop (model: {self.model})")
+
         while rounds < self.max_tool_rounds:
             rounds += 1
             resp = litellm.completion(
@@ -558,11 +579,15 @@ class ClawAgent:
             choice = resp.choices[0]
             finish_reason = choice.finish_reason
 
-            # Append assistant turn (includes tool_calls when present).
             assistant_msg = choice.message
             messages.append(assistant_msg)
 
+            # Emit any assistant text as thinking
+            if assistant_msg.content:
+                self._emit_event("thinking", assistant_msg.content)
+
             if finish_reason in ("stop", "end_turn"):
+                self._emit_event("info", "Agent finished planning.")
                 break
             if finish_reason != "tool_calls":
                 print(
@@ -574,12 +599,24 @@ class ClawAgent:
             done = False
             for tc in assistant_msg.tool_calls or []:
                 name = tc.function.name
-                # LiteLLM returns arguments as a JSON string; parse to dict.
                 try:
                     inputs = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
                     inputs = {}
+
+                # Emit tool_call event with abbreviated args
+                abbrev = _abbreviate_tool_args(name, inputs)
+                self._emit_event("tool_call", f"Calling {name}", name, abbrev)
+
                 result_text, should_stop = self._dispatch(name, inputs, workflow_manager)
+
+                # Emit tool_result event
+                self._emit_event(
+                    "tool_result",
+                    result_text[:300],
+                    name,
+                )
+
                 messages.append(
                     {
                         "role": "tool",
@@ -589,6 +626,7 @@ class ClawAgent:
                 )
                 if should_stop:
                     rationale = inputs.get("rationale", rationale)
+                    self._emit_event("info", f"Finalized: {rationale[:200]}")
                     done = True
 
             if done:
@@ -685,6 +723,10 @@ class ClawAgent:
                         f"[ClawAgent] Strategy: {inputs['strategy']}\n"
                         f"            Top issue: {inputs['top_issue']}"
                     )
+                    self._emit_event(
+                        "strategy",
+                        f"**Strategy:** {inputs['strategy']}\n**Top issue:** {inputs['top_issue']}",
+                    )
                     return "Strategy noted.", False
 
                 case "validate_workflow":
@@ -693,9 +735,11 @@ class ClawAgent:
                         msg = "⚠️ Validation found issues:\n" + "\n".join(f"  • {e}" for e in errs)
                         msg += "\n\nFix these before calling finalize_workflow."
                         print(f"[ClawAgent] ⚠️ Validation: {len(errs)} issue(s)")
+                        self._emit_event("validation", f"⚠️ {len(errs)} issue(s) found")
                         return msg, False
                     node_count = len(wm.workflow)
                     print(f"[ClawAgent] ✅ Validation passed ({node_count} nodes)")
+                    self._emit_event("validation", f"✅ Valid ({node_count} nodes)")
                     return f"✅ Workflow is valid ({node_count} nodes, no issues found).", False
 
                 case "finalize_workflow":
@@ -1043,6 +1087,20 @@ class ClawAgent:
                 self.on_change(wm.to_dict())
             except Exception as exc:
                 print(f"[ClawAgent] on_change error: {exc}", file=sys.stderr)
+
+    def _emit_event(
+        self,
+        event_type: str,
+        content: str,
+        tool_name: str = "",
+        tool_args: dict | None = None,
+    ) -> None:
+        """Fire an agent-thinking event if a listener is attached."""
+        if self.on_agent_event:
+            try:
+                self.on_agent_event(event_type, content, tool_name, tool_args)
+            except Exception:
+                pass
 
     def _build_user_message(
         self,

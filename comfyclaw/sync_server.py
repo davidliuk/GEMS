@@ -104,6 +104,9 @@ class SyncServer:
         self._trigger_future: asyncio.Future[dict] | None = None
         self._trigger_lock = threading.Lock()
 
+        self._refinement_future: asyncio.Future[dict] | None = None
+        self._refinement_lock = threading.Lock()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -272,6 +275,63 @@ class SyncServer:
                 self._trigger_future = None
 
     # ------------------------------------------------------------------
+    # User refinement (mid-run feedback from the thinking panel)
+    # ------------------------------------------------------------------
+
+    def wait_for_refinement(self, timeout: float = 0) -> dict | None:
+        """Block until a client sends ``user_refinement``.
+
+        Returns the parsed dict or ``None`` on timeout / not running.
+        Non-blocking if ``timeout=0`` — returns immediately if nothing pending.
+        """
+        if not self._loop or not self.is_running():
+            return None
+
+        with self._refinement_lock:
+            if self._refinement_future and self._refinement_future.done():
+                try:
+                    return self._refinement_future.result()
+                except Exception:
+                    return None
+                finally:
+                    self._refinement_future = None
+        return None
+
+    def poll_refinement(self) -> dict | None:
+        """Non-blocking check for a pending ``user_refinement``."""
+        with self._refinement_lock:
+            if self._refinement_future and self._refinement_future.done():
+                try:
+                    return self._refinement_future.result()
+                except Exception:
+                    return None
+                finally:
+                    self._refinement_future = None
+            return None
+
+    def enable_refinement_listening(self) -> None:
+        """Arm the refinement future so the next ``user_refinement`` is captured."""
+        if not self._loop or not self.is_running():
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._create_refinement_future(), self._loop
+        )
+
+    async def _create_refinement_future(self) -> asyncio.Future[dict]:
+        loop = asyncio.get_running_loop()
+        with self._refinement_lock:
+            if self._refinement_future and not self._refinement_future.done():
+                self._refinement_future.cancel()
+            self._refinement_future = loop.create_future()
+            return self._refinement_future
+
+    def _resolve_refinement(self, data: dict) -> None:
+        with self._refinement_lock:
+            if self._refinement_future and not self._refinement_future.done():
+                self._refinement_future.set_result(data)
+                self._refinement_future = None
+
+    # ------------------------------------------------------------------
     # Generation status broadcasts (serve loop → ComfyUI panel)
     # ------------------------------------------------------------------
 
@@ -296,6 +356,40 @@ class SyncServer:
     def send_error(self, error: str) -> None:
         """Broadcast a ``generation_error`` message."""
         self._send_json({"type": "generation_error", "error": error})
+
+    def send_agent_event(
+        self,
+        event_type: str,
+        content: str,
+        *,
+        iteration: int = 0,
+        tool_name: str = "",
+        tool_args: dict | None = None,
+    ) -> None:
+        """Broadcast an ``agent_event`` for the thinking-log panel.
+
+        Parameters
+        ----------
+        event_type : One of ``"strategy"``, ``"tool_call"``, ``"tool_result"``,
+                     ``"thinking"``, ``"validation"``, ``"error"``, ``"info"``.
+        content    : Human-readable description / agent text.
+        tool_name  : Tool that was called (for ``tool_call`` / ``tool_result``).
+        tool_args  : Abbreviated tool arguments (for ``tool_call``).
+        """
+        import time
+
+        msg: dict[str, Any] = {
+            "type": "agent_event",
+            "event_type": event_type,
+            "content": content,
+            "timestamp": time.time(),
+            "iteration": iteration,
+        }
+        if tool_name:
+            msg["tool_name"] = tool_name
+        if tool_args:
+            msg["tool_args"] = tool_args
+        self._send_json(msg)
 
     def _send_json(self, msg: dict) -> None:
         """Broadcast an arbitrary JSON message to all clients."""
@@ -423,6 +517,9 @@ class SyncServer:
                     elif msg_type == "trigger_generation":
                         log.info("[SyncServer] Received trigger_generation")
                         self._resolve_trigger(msg)
+                    elif msg_type == "user_refinement":
+                        log.info("[SyncServer] Received user_refinement")
+                        self._resolve_refinement(msg)
                 except (json.JSONDecodeError, TypeError):
                     pass
         except Exception:

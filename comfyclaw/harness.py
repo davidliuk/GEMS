@@ -217,6 +217,8 @@ class ClawHarness:
             on_change=self._on_workflow_change,
             pinned_image_model=config.image_model,
         )
+        self._agent.on_agent_event = self._on_agent_event
+        self._current_iteration = 0
 
         vlm_verifier = ClawVerifier(
             api_key=config.api_key,
@@ -300,6 +302,7 @@ class ClawHarness:
         last_result: VerifierResult | None = None
 
         for iteration in range(1, cfg.max_iterations + 1):
+            self._current_iteration = iteration
             print(f"\n--- Iteration {iteration}/{cfg.max_iterations} ---")
             self._emit_status("running", iteration, f"Iteration {iteration}/{cfg.max_iterations}")
 
@@ -315,6 +318,7 @@ class ClawHarness:
             # produces add_node diffs (not a single full snapshot).
             if self._sync:
                 self._sync.reset(empty=True)
+                self._sync.enable_refinement_listening()
 
             # Broadcast base workflow nodes one-by-one so the ComfyUI
             # canvas shows them appearing incrementally.
@@ -336,6 +340,14 @@ class ClawHarness:
 
             # ── Agent evolves the workflow ─────────────────────────────────
             verifier_feedback = self._build_feedback(last_result)
+
+            # Check for user refinement messages sent from the thinking panel
+            user_refinement = self._poll_user_refinement()
+            if user_refinement:
+                prefix = f"[User refinement request]: {user_refinement}\n\n"
+                verifier_feedback = prefix + (verifier_feedback or "")
+                print(f"[ClawHarness] 👤 User refinement: {user_refinement[:100]}")
+
             memory_summary = (
                 self._memory.format_history_for_agent() if self._memory.attempts else None
             )
@@ -596,6 +608,32 @@ class ClawHarness:
     def _on_workflow_change(self, workflow: dict) -> None:
         if self._sync:
             self._sync.broadcast(workflow)
+
+    def _poll_user_refinement(self) -> str | None:
+        """Check for a pending user_refinement message (non-blocking)."""
+        if not self._sync:
+            return None
+        self._sync.enable_refinement_listening()
+        data = self._sync.poll_refinement()
+        if data:
+            return data.get("text", "").strip() or None
+        return None
+
+    def _on_agent_event(
+        self,
+        event_type: str,
+        content: str,
+        tool_name: str = "",
+        tool_args: dict | None = None,
+    ) -> None:
+        if self._sync:
+            self._sync.send_agent_event(
+                event_type,
+                content,
+                iteration=self._current_iteration,
+                tool_name=tool_name,
+                tool_args=tool_args,
+            )
 
     def _build_repair_feedback(
         self, error_msg: str | None, last_result: VerifierResult | None

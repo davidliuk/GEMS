@@ -25,6 +25,7 @@ def _make_agent(
 
     agent.skill_manager = SkillManager(None)  # built-in skills
     agent.on_change = None
+    agent.on_agent_event = None
     agent.max_tool_rounds = 10
     agent.pinned_image_model = pinned_image_model
     return agent

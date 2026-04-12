@@ -420,8 +420,21 @@ def _cmd_serve(args: argparse.Namespace) -> None:
             iterations = settings.get("iterations", args.iterations)
             verifier_mode = settings.get("verifier_mode", args.verifier_mode)
 
+            # Model / API-key overrides from the ComfyUI panel
+            trigger_model = settings.get("model", "").strip()
+            trigger_api_key = settings.get("api_key", "").strip()
+            trigger_verifier_model = settings.get("verifier_model", "").strip()
+
+            run_cfg = dict(base_cfg)
+            if trigger_model:
+                run_cfg["model"] = trigger_model
+            if trigger_api_key:
+                run_cfg["api_key"] = trigger_api_key
+            if trigger_verifier_model:
+                run_cfg["verifier_model"] = trigger_verifier_model
+
             cfg = HarnessConfig(
-                **base_cfg,
+                **run_cfg,
                 max_iterations=iterations,
                 verifier_mode=verifier_mode,
             )
@@ -430,7 +443,7 @@ def _cmd_serve(args: argparse.Namespace) -> None:
             node_count = len(workflow) if workflow else 0
             print(f"\n[serve] 🚀 Trigger received: {prompt[:80]!r}")
             print(f"[serve]    Mode: {mode_label}, Iterations: {iterations}, "
-                  f"Verifier: {verifier_mode}, Nodes: {node_count}")
+                  f"Verifier: {verifier_mode}, Model: {cfg.model}, Nodes: {node_count}")
 
             sync.send_status("running", iteration=0, detail="Initializing agent…")
 
