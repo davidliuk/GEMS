@@ -284,13 +284,16 @@ def _cmd_run(args: argparse.Namespace, dry: bool = False) -> None:
         score_weights=_env_score_weights(),
         image_model=args.image_model or None,
         max_repair_attempts=args.max_repair_attempts,
+        verifier_mode=args.verifier_mode,
     )
 
     verifier_label = cfg.verifier_model or f"{cfg.model} (shared)"
     print(f"\n[cli] Workflow       : {args.workflow or '(empty — agent builds from scratch)'}")
     print(f"[cli] Prompt         : {args.prompt!r}")
     print(f"[cli] Agent model    : {cfg.model}")
-    print(f"[cli] Verifier model : {verifier_label}")
+    print(f"[cli] Verifier mode  : {cfg.verifier_mode}")
+    if cfg.verifier_mode in ("vlm", "hybrid"):
+        print(f"[cli] Verifier model : {verifier_label}")
     print(f"[cli] Image model    : {cfg.image_model or '(from workflow)'}")
     print(f"[cli] Iterations     : {cfg.max_iterations}  Threshold: {cfg.success_threshold}")
     print(f"[cli] Dry-run        : {dry}")
@@ -408,6 +411,17 @@ def _build_parser() -> argparse.ArgumentParser:
                 "'Qwen/Qwen-Image-2512' or 'realisticVisionV51.safetensors'. "
                 "Overrides COMFYCLAW_IMAGE_MODEL env var. "
                 "Leave unset to use whatever model the workflow already specifies."
+            ),
+        )
+        p.add_argument(
+            "--verifier-mode",
+            default=_env_str("COMFYCLAW_VERIFIER_MODE", "vlm"),
+            choices=["vlm", "human", "hybrid"],
+            metavar="MODE",
+            help=(
+                "Verification mode: 'vlm' (default) uses a vision LLM, "
+                "'human' collects feedback via ComfyUI panel or terminal, "
+                "'hybrid' runs VLM first then lets a human accept or override."
             ),
         )
 

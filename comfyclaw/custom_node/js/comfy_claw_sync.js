@@ -1,11 +1,11 @@
 /**
- * ComfyClaw Sync Extension  v2.0
+ * ComfyClaw Sync Extension  v3.0
  *
  * Connects to the ComfyClaw Python sync server (ws://127.0.0.1:8765 by default)
  * and reloads the ComfyUI canvas in real time whenever the agent modifies the
- * workflow topology.
+ * workflow topology.  Also supports human-in-the-loop feedback collection.
  *
- * Protocol — the Python SyncServer sends two message types:
+ * Protocol — the Python SyncServer sends these message types:
  *
  *   Full snapshot (initial load / reconnect):
  *   { "type": "workflow_update", "workflow": { "<nodeId>": { class_type, inputs, … }, … } }
@@ -13,12 +13,20 @@
  *   Incremental diff (subsequent mutations):
  *   { "type": "workflow_diff", "ops": [ {op, id, data?}, … ], "full": {…} }
  *
+ *   Feedback request (human-in-the-loop):
+ *   { "type": "request_feedback", "image_path": "...", "vlm_summary": "...|null",
+ *     "iteration": N, "prompt": "..." }
+ *
+ * Client → server:
+ *   { "type": "human_feedback", "text": "...", "score": 0.7, "action": "override"|"accept" }
+ *
  * Configuration (persisted in localStorage):
  *   localStorage.setItem('comfyclaw_ws_url', 'ws://127.0.0.1:8765');
  *   localStorage.setItem('comfyclaw_op_delay', '400');   // ms between ops
  *
  * Status badge:
  *   🔄 connecting  |  🟢 live  |  ✨ updated (flashes 2 s)  |  🔴 disconnected
+ *   📝 awaiting feedback
  */
 
 import { app } from "../../scripts/app.js";
@@ -82,6 +90,7 @@ const STATUS = {
   connected:    { bg: "#1a7a3f", fg: "#fff", label: "🟢 ComfyClaw: live"           },
   disconnected: { bg: "#7a1a1a", fg: "#fff", label: "🔴 ComfyClaw: disconnected"   },
   updated:      { bg: "#1a4a7a", fg: "#fff", label: "✨ ComfyClaw: graph updated"  },
+  feedback:     { bg: "#7a5a1a", fg: "#fff", label: "📝 ComfyClaw: awaiting feedback" },
 };
 
 function setStatus(state, extra) {
@@ -101,6 +110,176 @@ function promptConfig() {
   if (val !== null) {
     localStorage.setItem("comfyclaw_ws_url", val.trim());
     window.location.reload();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Human-in-the-loop feedback panel
+// ─────────────────────────────────────────────────────────────────────────────
+
+let _feedbackPanel = null;
+let _activeSyncClient = null;
+
+function createFeedbackPanel() {
+  const overlay = document.createElement("div");
+  overlay.id = "comfyclaw-feedback-overlay";
+  Object.assign(overlay.style, {
+    display:        "none",
+    position:       "fixed",
+    top:            "0",
+    left:           "0",
+    width:          "100vw",
+    height:         "100vh",
+    background:     "rgba(0,0,0,0.5)",
+    zIndex:         "10000",
+    justifyContent: "center",
+    alignItems:     "center",
+  });
+
+  const panel = document.createElement("div");
+  Object.assign(panel.style, {
+    background:    "#1e1e2e",
+    color:         "#cdd6f4",
+    borderRadius:  "12px",
+    padding:       "24px",
+    width:         "520px",
+    maxHeight:     "80vh",
+    overflowY:     "auto",
+    boxShadow:     "0 8px 32px rgba(0,0,0,0.5)",
+    fontFamily:    "system-ui, -apple-system, sans-serif",
+    fontSize:      "14px",
+    lineHeight:    "1.5",
+  });
+
+  panel.innerHTML = `
+    <h2 style="margin:0 0 8px 0; font-size:18px; color:#cba6f7;">
+      📝 ComfyClaw — Your Feedback
+    </h2>
+    <div id="comfyclaw-fb-meta" style="margin-bottom:12px; color:#a6adc8; font-size:13px;"></div>
+    <div id="comfyclaw-fb-vlm" style="margin-bottom:12px; display:none;
+         background:#313244; border-radius:8px; padding:12px; font-size:13px;
+         white-space:pre-wrap; max-height:200px; overflow-y:auto;"></div>
+    <label style="display:block; margin-bottom:4px; font-weight:600; color:#a6adc8;">
+      How is the result?
+    </label>
+    <div id="comfyclaw-fb-scores" style="display:flex; gap:8px; margin-bottom:16px;">
+    </div>
+    <label style="display:block; margin-bottom:4px; font-weight:600; color:#a6adc8;">
+      Feedback (what should be improved?)
+    </label>
+    <textarea id="comfyclaw-fb-text" rows="4" placeholder="e.g. The lighting is too flat, make it more dramatic. The background needs more depth..."
+      style="width:100%; box-sizing:border-box; background:#313244; color:#cdd6f4;
+             border:1px solid #45475a; border-radius:8px; padding:10px; font-size:14px;
+             font-family:inherit; resize:vertical;"></textarea>
+    <div style="display:flex; gap:10px; margin-top:16px; justify-content:flex-end;">
+      <button id="comfyclaw-fb-accept" style="padding:8px 20px; border:1px solid #45475a;
+              border-radius:8px; background:#313244; color:#a6e3a1; cursor:pointer;
+              font-size:14px; font-weight:600;">
+        ✓ Accept as-is
+      </button>
+      <button id="comfyclaw-fb-submit" style="padding:8px 20px; border:none;
+              border-radius:8px; background:#cba6f7; color:#1e1e2e; cursor:pointer;
+              font-size:14px; font-weight:600;">
+        Send Feedback →
+      </button>
+    </div>
+  `;
+
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+
+  const scoreButtons = [
+    { label: "👍 Good",       score: 0.9, color: "#a6e3a1" },
+    { label: "👌 OK",         score: 0.6, color: "#f9e2af" },
+    { label: "👎 Needs Work", score: 0.3, color: "#f38ba8" },
+  ];
+  const scoreContainer = panel.querySelector("#comfyclaw-fb-scores");
+  let selectedScore = 0.6;
+
+  scoreButtons.forEach(({ label, score, color }) => {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    btn.dataset.score = score;
+    Object.assign(btn.style, {
+      flex:          "1",
+      padding:       "8px 4px",
+      border:        "2px solid #45475a",
+      borderRadius:  "8px",
+      background:    "#313244",
+      color:         "#cdd6f4",
+      cursor:        "pointer",
+      fontSize:      "13px",
+      fontWeight:    "600",
+      transition:    "all 0.15s",
+    });
+    btn.addEventListener("click", () => {
+      selectedScore = score;
+      scoreContainer.querySelectorAll("button").forEach(b => {
+        b.style.borderColor = "#45475a";
+        b.style.background = "#313244";
+        b.style.color = "#cdd6f4";
+      });
+      btn.style.borderColor = color;
+      btn.style.background = color + "22";
+      btn.style.color = color;
+    });
+    scoreContainer.appendChild(btn);
+  });
+
+  // Pre-select "OK"
+  scoreContainer.children[1].click();
+
+  function sendFeedback(action) {
+    const text = panel.querySelector("#comfyclaw-fb-text").value.trim();
+    const msg = {
+      type:   "human_feedback",
+      text:   action === "accept" ? "" : text,
+      score:  action === "accept" ? 0.85 : selectedScore,
+      action: action,
+    };
+    if (_activeSyncClient && _activeSyncClient.ws && _activeSyncClient.ws.readyState === WebSocket.OPEN) {
+      _activeSyncClient.ws.send(JSON.stringify(msg));
+      console.log("[ComfyClaw] Sent human_feedback:", msg);
+    }
+    hideFeedbackPanel();
+    setStatus("connected");
+  }
+
+  panel.querySelector("#comfyclaw-fb-submit").addEventListener("click", () => sendFeedback("override"));
+  panel.querySelector("#comfyclaw-fb-accept").addEventListener("click", () => sendFeedback("accept"));
+
+  return overlay;
+}
+
+function showFeedbackPanel(msg) {
+  if (!_feedbackPanel) {
+    _feedbackPanel = createFeedbackPanel();
+  }
+  const meta = _feedbackPanel.querySelector("#comfyclaw-fb-meta");
+  meta.textContent = `Iteration ${msg.iteration || "?"} — Prompt: "${msg.prompt || "?"}"`;
+
+  const vlmEl = _feedbackPanel.querySelector("#comfyclaw-fb-vlm");
+  if (msg.vlm_summary) {
+    vlmEl.style.display = "block";
+    vlmEl.textContent = "🤖 VLM Assessment:\n" + msg.vlm_summary;
+  } else {
+    vlmEl.style.display = "none";
+  }
+
+  _feedbackPanel.querySelector("#comfyclaw-fb-text").value = "";
+  // Re-select "OK" as default
+  const scores = _feedbackPanel.querySelector("#comfyclaw-fb-scores");
+  if (scores && scores.children[1]) scores.children[1].click();
+
+  _feedbackPanel.style.display = "flex";
+  setStatus("feedback");
+  // Focus the text area
+  setTimeout(() => _feedbackPanel.querySelector("#comfyclaw-fb-text")?.focus(), 100);
+}
+
+function hideFeedbackPanel() {
+  if (_feedbackPanel) {
+    _feedbackPanel.style.display = "none";
   }
 }
 
@@ -379,6 +558,9 @@ class SyncClient {
       if (rmCount)   parts.push(`-${rmCount}`);
       if (updCount)  parts.push(`~${updCount}`);
       setStatus("updated", `${total} nodes (${parts.join(", ")})`);
+    } else if (msg.type === "request_feedback") {
+      console.log("[ComfyClaw] Feedback requested for iteration", msg.iteration);
+      showFeedbackPanel(msg);
     }
   }
 
@@ -407,8 +589,11 @@ app.registerExtension({
   name: "ComfyClaw.SyncBridge",
 
   async setup() {
-    console.log("[ComfyClaw] Extension loaded — ComfyClaw Sync Bridge v2.0");
+    console.log("[ComfyClaw] Extension loaded — ComfyClaw Sync Bridge v3.0");
     statusEl = createStatusBadge();
-    setTimeout(() => new SyncClient().connect(), 500);
+    setTimeout(() => {
+      _activeSyncClient = new SyncClient();
+      _activeSyncClient.connect();
+    }, 500);
   },
 });

@@ -6,11 +6,13 @@ ComfyClaw-Sync ComfyUI extension).
 Runs in a background daemon thread using its own asyncio event loop so it
 never blocks the main harness loop.
 
-Supports two message types:
-  - ``workflow_update``  — full workflow snapshot (used on reconnect /
-    initial load).
-  - ``workflow_diff``    — incremental ops (add_node, remove_node,
-    update_node) computed by diffing against the previous broadcast.
+Supports these message types (server → client):
+  - ``workflow_update``   — full workflow snapshot (reconnect / initial load).
+  - ``workflow_diff``     — incremental ops (add_node, remove_node, update_node).
+  - ``request_feedback``  — ask the human for feedback on a generated image.
+
+And these (client → server):
+  - ``human_feedback``    — human's text feedback, score, and action.
 """
 
 from __future__ import annotations
@@ -91,6 +93,9 @@ class SyncServer:
         self._stop_event: asyncio.Event | None = None
         self._ready = threading.Event()
 
+        self._feedback_future: asyncio.Future[dict] | None = None
+        self._feedback_lock = threading.Lock()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -131,6 +136,78 @@ class SyncServer:
         """
         with self._wf_lock:
             self._last_workflow = {} if empty else None
+
+    def has_clients(self) -> bool:
+        """Return True if at least one WebSocket client is connected."""
+        with self._clients_lock:
+            return len(self._clients) > 0
+
+    # ------------------------------------------------------------------
+    # Human-in-the-loop feedback
+    # ------------------------------------------------------------------
+
+    def request_feedback(
+        self,
+        image_path: str | None = None,
+        vlm_summary: str | None = None,
+        iteration: int = 0,
+        prompt: str = "",
+    ) -> None:
+        """Broadcast a ``request_feedback`` message to all connected clients."""
+        if not self._loop or not self.is_running():
+            return
+        with self._clients_lock:
+            clients = set(self._clients)
+        if not clients:
+            return
+
+        msg = {
+            "type": "request_feedback",
+            "image_path": image_path,
+            "vlm_summary": vlm_summary,
+            "iteration": iteration,
+            "prompt": prompt,
+        }
+        payload = json.dumps(msg)
+        asyncio.run_coroutine_threadsafe(
+            self._async_broadcast(payload, clients), self._loop
+        )
+
+    def wait_for_human_feedback(self, timeout: float = 600.0) -> dict | None:
+        """Block the calling thread until a client sends ``human_feedback``.
+
+        Returns the parsed feedback dict, or ``None`` on timeout.
+        Safe to call from any thread (typically the main harness thread).
+        """
+        if not self._loop or not self.is_running():
+            return None
+
+        future: asyncio.Future[dict] = asyncio.run_coroutine_threadsafe(
+            self._create_feedback_future(), self._loop
+        ).result(timeout=5)
+
+        try:
+            return future.result(timeout=timeout)
+        except Exception:
+            with self._feedback_lock:
+                self._feedback_future = None
+            return None
+
+    async def _create_feedback_future(self) -> asyncio.Future[dict]:
+        """Create and store a Future in the event loop thread."""
+        loop = asyncio.get_running_loop()
+        with self._feedback_lock:
+            if self._feedback_future and not self._feedback_future.done():
+                self._feedback_future.cancel()
+            self._feedback_future = loop.create_future()
+            return self._feedback_future
+
+    def _resolve_feedback(self, data: dict) -> None:
+        """Resolve the pending feedback future (called from the event loop thread)."""
+        with self._feedback_lock:
+            if self._feedback_future and not self._feedback_future.done():
+                self._feedback_future.set_result(data)
+                self._feedback_future = None
 
     # ------------------------------------------------------------------
     # Broadcast
@@ -227,8 +304,14 @@ class SyncServer:
                 pass
 
         try:
-            async for _ in websocket:
-                pass  # we only push; ignore any client messages
+            async for raw in websocket:
+                try:
+                    msg = json.loads(raw)
+                    if isinstance(msg, dict) and msg.get("type") == "human_feedback":
+                        log.info("[SyncServer] Received human_feedback")
+                        self._resolve_feedback(msg)
+                except (json.JSONDecodeError, TypeError):
+                    pass
         except Exception:
             pass
         finally:

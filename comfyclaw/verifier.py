@@ -59,6 +59,7 @@ class VerifierResult:
     region_issues: list[RegionIssue] = field(default_factory=list)
     overall_assessment: str = ""
     evolution_suggestions: list[str] = field(default_factory=list)
+    feedback_source: str = "vlm"  # "vlm", "human", or "hybrid"
 
     def format_feedback(self) -> str:
         lines = [f"Overall score: {self.score:.2f}  |  {self.overall_assessment}"]
@@ -178,7 +179,7 @@ class ClawVerifier:
     # Public API
     # ------------------------------------------------------------------
 
-    def verify(self, image_bytes: bytes, prompt: str) -> VerifierResult:
+    def verify(self, image_bytes: bytes, prompt: str, iteration: int = 0) -> VerifierResult:
         """
         Run full verification: requirement checks + detailed region analysis.
 

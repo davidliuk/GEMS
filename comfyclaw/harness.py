@@ -91,6 +91,7 @@ class HarnessConfig:
     score_weights: tuple[float, float] = field(default_factory=lambda: (0.6, 0.4))
     image_model: str | None = None
     max_repair_attempts: int = 2
+    verifier_mode: str = "vlm"  # "vlm", "human", or "hybrid"
     """
     Pin the image-generation model (checkpoint / UNET) used by ComfyUI.
 
@@ -210,11 +211,34 @@ class ClawHarness:
             on_change=self._on_workflow_change,
             pinned_image_model=config.image_model,
         )
-        self._verifier = ClawVerifier(
+
+        vlm_verifier = ClawVerifier(
             api_key=config.api_key,
             model=config.verifier_model or config.model,
             score_weights=config.score_weights,
         )
+
+        mode = config.verifier_mode
+        if mode == "human":
+            from .human_verifier import HumanVerifier
+
+            self._verifier = HumanVerifier(
+                sync_server=self._sync,
+                timeout=600.0,
+            )
+            log.info("Verifier mode: human (feedback via ComfyUI panel or terminal)")
+        elif mode == "hybrid":
+            from .human_verifier import HybridVerifier
+
+            self._verifier = HybridVerifier(
+                vlm_verifier=vlm_verifier,
+                sync_server=self._sync,
+                timeout=600.0,
+            )
+            log.info("Verifier mode: hybrid (VLM + human override)")
+        else:
+            self._verifier = vlm_verifier
+            log.info("Verifier mode: vlm")
 
     # ------------------------------------------------------------------
     # Context manager
@@ -512,7 +536,7 @@ class ClawHarness:
 
             # ── Verify ────────────────────────────────────────────────────
             print("[ClawHarness] 🔍 Verifying image…")
-            result = self._verifier.verify(image_bytes, prompt)
+            result = self._verifier.verify(image_bytes, prompt, iteration=iteration)
             last_result = result
             print(f"[ClawHarness] Score: {result.score:.2f}")
             print(result.format_feedback())

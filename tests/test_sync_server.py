@@ -229,3 +229,84 @@ class TestSyncServerBroadcast:
         srv.broadcast(wf1)
         srv.broadcast(wf2)
         assert srv._last_workflow == wf2
+
+
+# ---------------------------------------------------------------------------
+# Bidirectional / feedback tests
+# ---------------------------------------------------------------------------
+
+
+class TestSyncServerFeedback:
+    @staticmethod
+    def _make_server():
+        return SyncServer(port=0, host="127.0.0.1")
+
+    def test_has_clients_empty(self):
+        srv = self._make_server()
+        assert srv.has_clients() is False
+
+    def test_has_clients_with_one(self):
+        srv = self._make_server()
+        srv._clients.add(MagicMock())
+        assert srv.has_clients() is True
+
+    def test_resolve_feedback(self):
+        """_resolve_feedback sets the future result."""
+        import asyncio
+
+        srv = self._make_server()
+        loop = asyncio.new_event_loop()
+        try:
+            future = loop.create_future()
+            srv._feedback_future = future
+            srv._resolve_feedback({"text": "looks good", "score": 0.9})
+            assert future.done()
+            assert future.result() == {"text": "looks good", "score": 0.9}
+            assert srv._feedback_future is None
+        finally:
+            loop.close()
+
+    def test_resolve_feedback_no_pending(self):
+        """_resolve_feedback is a no-op when no future is pending."""
+        srv = self._make_server()
+        srv._resolve_feedback({"text": "hi"})  # should not raise
+
+    def test_request_feedback_broadcasts(self):
+        """request_feedback sends a message to connected clients."""
+        srv = self._make_server()
+        srv._loop = MagicMock()
+        srv._thread = MagicMock()
+        srv._thread.is_alive.return_value = True
+        mock_ws = MagicMock()
+        srv._clients.add(mock_ws)
+
+        with patch("asyncio.run_coroutine_threadsafe") as mock_run:
+            srv.request_feedback(
+                image_path="/tmp/test.png",
+                vlm_summary="score: 0.7",
+                iteration=1,
+                prompt="a cat",
+            )
+
+        assert mock_run.called
+        payload = mock_run.call_args[0][0]
+        # The first arg is a coroutine — we can't easily inspect it,
+        # but we can verify run_coroutine_threadsafe was called
+        assert mock_run.call_args[0][1] is srv._loop
+
+    def test_request_feedback_noop_no_clients(self):
+        srv = self._make_server()
+        srv._loop = MagicMock()
+        srv._thread = MagicMock()
+        srv._thread.is_alive.return_value = True
+        # No clients
+
+        with patch("asyncio.run_coroutine_threadsafe") as mock_run:
+            srv.request_feedback(image_path="/tmp/test.png")
+
+        assert not mock_run.called
+
+    def test_wait_for_feedback_returns_none_when_not_running(self):
+        srv = self._make_server()
+        result = srv.wait_for_human_feedback(timeout=0.1)
+        assert result is None

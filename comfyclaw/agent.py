@@ -130,6 +130,15 @@ Decision heuristics
   Multiple objects with spatial layout → read_skill("spatial")
   Text / sign / label in the image     → read_skill("text-rendering")
 
+Human-in-the-loop feedback
+--------------------------
+When the verifier feedback section starts with "## Human Reviewer Feedback",
+the feedback comes from a human reviewer, not an automated VLM.
+Human feedback expresses subjective preferences — style, mood, composition,
+color palette, artistic direction.  Prioritize these over structural/technical
+changes.  Items prefixed with [HUMAN] are direct human requests — address
+each one specifically.  Do not second-guess or override human preferences.
+
 Node parameter constraints (DO NOT violate)
 -------------------------------------------
   UNETLoader weight_dtype:  "default" | "fp8_e4m3fn" | "fp8_e4m3fn_fast" | "fp8_e5m2"
@@ -1137,11 +1146,19 @@ class ClawAgent:
             )
 
         if verifier_feedback:
-            parts.append(
-                f"## Verifier Feedback (previous iteration)\n{verifier_feedback}\n\n"
-                "Use the evolution_suggestions and region_issues above to decide which "
-                "structural upgrade to apply this round."
-            )
+            if "[HUMAN]" in verifier_feedback or "[Human override]" in verifier_feedback:
+                parts.append(
+                    f"## Human Reviewer Feedback (previous iteration)\n{verifier_feedback}\n\n"
+                    "The human reviewer has given you specific feedback about the image quality.\n"
+                    "Prioritize their subjective preferences (style, mood, composition, color) "
+                    "over structural or technical changes. Address their feedback directly."
+                )
+            else:
+                parts.append(
+                    f"## Verifier Feedback (previous iteration)\n{verifier_feedback}\n\n"
+                    "Use the evolution_suggestions and region_issues above to decide which "
+                    "structural upgrade to apply this round."
+                )
         if memory_summary:
             parts.append(f"## Memory / Past Attempts\n{memory_summary}")
 
