@@ -2,8 +2,11 @@
 """
 ComfyClaw-only benchmark — 20 GenEval2 prompts with warm-start + baseline_first.
 Supports resume: completed prompts are cached to disk and skipped on re-run.
+
+Saves ALL intermediate images and detailed per-iteration JSON for each prompt
+into per-prompt subfolders under DETAILED_DIR.
 """
-import copy, json, logging, os, sys, time
+import copy, json, logging, os, re, sys, time
 
 from pathlib import Path
 
@@ -20,6 +23,7 @@ log = logging.getLogger("claw_bench")
 # ── Config ────────────────────────────────────────────────────────────────
 GENEVAL2_PATH = os.environ.get("GENEVAL2_DATA", str(REPO_ROOT.parent / "GenEval2" / "geneval2_data.jsonl"))
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", str(REPO_ROOT.parent / "benchmark_claw_20"))
+DETAILED_DIR = os.environ.get("DETAILED_DIR", str(REPO_ROOT.parent / "benchmark_claw_detailed"))
 CHECKPOINT = "DreamShaper_8_pruned.safetensors"
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 COMFYUI_ADDR = "127.0.0.1:8188"
@@ -31,6 +35,14 @@ MAX_ITERATIONS = 2
 WARM_START = True
 
 os.makedirs(os.path.join(OUTPUT_DIR, "images"), exist_ok=True)
+os.makedirs(DETAILED_DIR, exist_ok=True)
+
+
+def _slug(text: str, max_len: int = 50) -> str:
+    """Turn a prompt string into a filesystem-safe folder name."""
+    s = text.lower().strip()
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s[:max_len]
 
 BASE_WORKFLOW = {
     "1": {
@@ -122,6 +134,7 @@ def run_one(prompt: str, idx: int) -> dict:
         skills_dir=SKILLS_DIR,
         max_nodes=20,
         baseline_first=WARM_START,
+        max_images=MAX_ITERATIONS + 2,  # retain all iteration images in memory
     )
 
     init_wf = copy.deepcopy(BASE_WORKFLOW) if WARM_START else {}
@@ -148,7 +161,7 @@ def run_one(prompt: str, idx: int) -> dict:
             failed_all = attempt.failed
             break
 
-    # Save image
+    # Save best image to the original location
     img_path = None
     if image_bytes:
         img_path = os.path.join(OUTPUT_DIR, "images", f"claw_{idx:02d}.png")
@@ -160,6 +173,69 @@ def run_one(prompt: str, idx: int) -> dict:
         harness.evolution_log.entries[-1].node_count_after
         if harness.evolution_log.entries else 7
     )
+
+    # ── Save detailed per-prompt results ──────────────────────────────
+    prompt_dir = os.path.join(DETAILED_DIR, f"prompt_{idx:02d}_{_slug(prompt)}")
+    os.makedirs(prompt_dir, exist_ok=True)
+
+    evo_entries_by_iter = {e.iteration: e for e in harness.evolution_log.entries}
+
+    iterations_detail = []
+    for attempt in harness.memory.attempts:
+        label = "baseline" if attempt.iteration == 0 else f"iter_{attempt.iteration}"
+        img_filename = f"{label}.png"
+
+        if attempt.image_bytes:
+            with open(os.path.join(prompt_dir, img_filename), "wb") as f:
+                f.write(attempt.image_bytes)
+
+        evo = evo_entries_by_iter.get(attempt.iteration)
+        is_error = (
+            attempt.verifier_score == 0.0
+            and any(f.startswith("Execution error:") for f in attempt.failed)
+        )
+        iterations_detail.append({
+            "iteration": attempt.iteration,
+            "label": label,
+            "status": "error" if is_error else "success",
+            "image_file": img_filename if attempt.image_bytes else None,
+            "verifier_score": attempt.verifier_score,
+            "passed": attempt.passed,
+            "failed": attempt.failed,
+            "experience": attempt.experience,
+            "workflow_snapshot": attempt.workflow_snapshot,
+            "agent_rationale": evo.rationale if evo else None,
+            "node_count_before": evo.node_count_before if evo else None,
+            "node_count_after": evo.node_count_after if evo else None,
+            "nodes_added": evo.node_ids_added if evo else None,
+            "repair_history": evo.repair_history if evo else [],
+        })
+
+    detail_json = {
+        "idx": idx,
+        "prompt": prompt,
+        "baseline_score": baseline_score,
+        "best_score": best_score,
+        "best_iteration": max(
+            harness.memory.attempts,
+            key=lambda a: a.verifier_score,
+        ).iteration if harness.memory.attempts else None,
+        "total_iterations": len(harness.evolution_log.entries),
+        "elapsed_s": round(elapsed, 1),
+        "final_node_count": node_count,
+        "config": {
+            "checkpoint": CHECKPOINT,
+            "llm_model": LLM_MODEL,
+            "max_iterations": MAX_ITERATIONS,
+            "warm_start": WARM_START,
+            "stage_gated": True,
+        },
+        "iterations": iterations_detail,
+    }
+    with open(os.path.join(prompt_dir, "details.json"), "w") as f:
+        json.dump(detail_json, f, indent=2, default=str)
+
+    log.info("  Detailed results saved to %s", prompt_dir)
 
     return {
         "idx": idx,

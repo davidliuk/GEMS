@@ -131,6 +131,7 @@ class EvolutionEntry:
     node_ids_added: list[str]
     rationale: str
     verifier_score: float | None = None
+    repair_history: list[dict] = field(default_factory=list)
 
     def summary(self) -> str:
         diff = self.node_count_after - self.node_count_before
@@ -523,12 +524,24 @@ class ClawHarness:
                 try:
                     queue_resp = self._client.queue_prompt(wm.workflow)
                     prompt_id = queue_resp["prompt_id"]
-                    submission_error = None
                     if repair_round > 0:
+                        evo.repair_history.append({
+                            "phase": "submission",
+                            "repair_round": repair_round,
+                            "error": submission_error,
+                            "outcome": "repaired",
+                        })
                         print(f"[ClawHarness] ✅ Repair {repair_round} accepted by ComfyUI.")
+                    submission_error = None
                     break
                 except Exception as exc:
                     submission_error = str(exc)
+                    evo.repair_history.append({
+                        "phase": "submission",
+                        "repair_round": repair_round,
+                        "error": submission_error,
+                        "outcome": "failed",
+                    })
                     print(
                         f"[ClawHarness] ❌ {'Repair' if repair_round > 0 else 'Queue'} error: {exc}"
                     )
@@ -545,6 +558,12 @@ class ClawHarness:
                 history = self._client.wait_for_completion(prompt_id, timeout=600)
             except TimeoutError as exc:
                 print(f"[ClawHarness] ❌ Timeout: {exc}")
+                evo.repair_history.append({
+                    "phase": "timeout",
+                    "repair_round": 0,
+                    "error": str(exc),
+                    "outcome": "failed",
+                })
                 self._record_error(iteration, wm.workflow, str(exc))
                 self._evolution_log.record(evo)
                 continue
@@ -563,6 +582,12 @@ class ClawHarness:
                         "(BrokenPipe / progress-bar stderr flush). Waiting 5 s then "
                         "retrying the same workflow once."
                     )
+                    evo.repair_history.append({
+                        "phase": "infra_retry",
+                        "repair_round": 0,
+                        "error": exec_error,
+                        "outcome": "retrying",
+                    })
                     time.sleep(5)
                     try:
                         rq_retry = self._client.queue_prompt(wm.workflow)
@@ -571,6 +596,12 @@ class ClawHarness:
                         history = self._client.wait_for_completion(retry_pid, timeout=600)
                     except Exception as infra_exc:
                         print(f"[ClawHarness] ❌ Infra-retry exception: {infra_exc}")
+                        evo.repair_history.append({
+                            "phase": "infra_retry",
+                            "repair_round": 1,
+                            "error": str(infra_exc),
+                            "outcome": "failed",
+                        })
                         self._record_error(iteration, wm.workflow, str(infra_exc))
                         self._evolution_log.record(evo)
                         last_result = None
@@ -579,6 +610,12 @@ class ClawHarness:
                     if "error" in history:
                         infra_msg = history["error"]
                         print(f"[ClawHarness] ❌ Infra-retry also failed: {infra_msg}")
+                        evo.repair_history.append({
+                            "phase": "infra_retry",
+                            "repair_round": 1,
+                            "error": infra_msg,
+                            "outcome": "failed",
+                        })
                         self._record_error(iteration, wm.workflow, infra_msg)
                         self._evolution_log.record(evo)
                         last_result = None
@@ -590,6 +627,12 @@ class ClawHarness:
                     # ── Workflow-logic error — let the agent repair the topology
                     repaired_prompt_id: str | None = None
                     exec_submission_error: str | None = exec_error
+                    evo.repair_history.append({
+                        "phase": "execution",
+                        "repair_round": 0,
+                        "error": exec_error,
+                        "outcome": "failed",
+                    })
 
                     for repair_round in range(1, cfg.max_repair_attempts + 1):
                         print(
@@ -613,10 +656,22 @@ class ClawHarness:
                             rq = self._client.queue_prompt(wm.workflow)
                             repaired_prompt_id = rq["prompt_id"]
                             exec_submission_error = None
+                            evo.repair_history.append({
+                                "phase": "execution",
+                                "repair_round": repair_round,
+                                "error": None,
+                                "outcome": "repaired",
+                            })
                             print(f"[ClawHarness] ✅ Execution repair {repair_round} accepted.")
                             break
                         except Exception as exc2:
                             exec_submission_error = str(exc2)
+                            evo.repair_history.append({
+                                "phase": "execution",
+                                "repair_round": repair_round,
+                                "error": exec_submission_error,
+                                "outcome": "failed",
+                            })
                             print(
                                 f"[ClawHarness] ❌ Execution repair {repair_round} failed: {exc2}"
                             )
@@ -634,6 +689,12 @@ class ClawHarness:
                         history = self._client.wait_for_completion(repaired_prompt_id, timeout=600)
                     except TimeoutError as exc:
                         print(f"[ClawHarness] ❌ Timeout after repair: {exc}")
+                        evo.repair_history.append({
+                            "phase": "execution_post_repair",
+                            "repair_round": repair_round,
+                            "error": str(exc),
+                            "outcome": "timeout",
+                        })
                         self._record_error(iteration, wm.workflow, str(exc))
                         self._evolution_log.record(evo)
                         continue
@@ -641,6 +702,12 @@ class ClawHarness:
                     if "error" in history:
                         msg = history["error"]
                         print(f"[ClawHarness] ❌ ComfyUI error after repair: {msg}")
+                        evo.repair_history.append({
+                            "phase": "execution_post_repair",
+                            "repair_round": repair_round,
+                            "error": msg,
+                            "outcome": "failed",
+                        })
                         self._record_error(iteration, wm.workflow, msg)
                         self._evolution_log.record(evo)
                         last_result = None
