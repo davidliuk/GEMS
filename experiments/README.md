@@ -5,7 +5,7 @@ Benchmark and experiment scripts for evaluating ComfyClaw against baselines.
 ## Prerequisites
 
 - ComfyUI running and accessible (default: `127.0.0.1:8188`)
-- In ComfyUI, do python main.py --listen 127.0.0.1 --port 8188
+- In ComfyUI, do `python main.py --listen 127.0.0.1 --port 8188`
 - `ANTHROPIC_API_KEY` environment variable set
 - GenEval2 data (`geneval2_data.jsonl`) — override path with `GENEVAL2_DATA` env var
 - Model checkpoints installed in ComfyUI's `models/` directories

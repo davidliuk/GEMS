@@ -379,6 +379,14 @@ class ClawHarness:
             except Exception as exc:
                 print(f"[ClawHarness] ⚠️ Baseline generation failed: {exc}")
 
+            if best_score >= cfg.success_threshold:
+                print(
+                    f"[ClawHarness] ✅ Baseline score {best_score:.2f} ≥ threshold "
+                    f"{cfg.success_threshold} — skipping evolution."
+                )
+                self._print_summary(best_score)
+                return best_image
+
         for iteration in range(1, cfg.max_iterations + 1):
             self._current_iteration = iteration
             print(f"\n--- Iteration {iteration}/{cfg.max_iterations} ---")
