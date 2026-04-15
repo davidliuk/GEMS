@@ -543,7 +543,9 @@ class ClawAgent:
                       ``"openai/gpt-4o"``, ``"gemini/gemini-2.0-flash"``,
                       ``"ollama/llama3.1"``.
     server_address  : ComfyUI HTTP address (used for model queries).
-    skills_dir      : Path to skills/ folder; ``None`` uses built-in skills.
+    skills_dir      : Path to pre-defined skills/ folder; ``None`` uses built-in.
+    evolved_skills_dir : Path to evolved/learned skills; ``None`` uses built-in
+                      ``skills_evolved/`` directory.
     on_change       : Called with the workflow dict after every mutation.
     max_tool_rounds : Safety cap on tool-call iterations.
     """
@@ -554,6 +556,7 @@ class ClawAgent:
         model: str = "anthropic/claude-sonnet-4-5",
         server_address: str = "127.0.0.1:8188",
         skills_dir: str | None = None,
+        evolved_skills_dir: str | None = None,
         on_change: Callable[[dict], None] | None = None,
         max_tool_rounds: int = 40,
         pinned_image_model: str | None = None,
@@ -569,7 +572,7 @@ class ClawAgent:
                 os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
         self.model = model
         self.server_address = server_address
-        self.skill_manager = SkillManager(skills_dir)
+        self.skill_manager = SkillManager(skills_dir, evolved_skills_dir=evolved_skills_dir)
         self.on_change = on_change
         self.on_agent_event: Callable[[str, str, str, dict | None], None] | None = None
         self.max_tool_rounds = max_tool_rounds

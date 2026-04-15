@@ -6,7 +6,7 @@ Supports resume: completed prompts are cached to disk and skipped on re-run.
 Saves ALL intermediate images and detailed per-iteration JSON for each prompt
 into per-prompt subfolders under DETAILED_DIR.
 """
-import copy, json, logging, os, re, sys, time
+import argparse, copy, json, logging, os, re, sys, time
 
 from pathlib import Path
 
@@ -30,7 +30,7 @@ COMFYUI_ADDR = "127.0.0.1:8188"
 LLM_MODEL = "anthropic/claude-sonnet-4-5"
 SKILLS_DIR = str(REPO_ROOT / "comfyclaw" / "skills")
 
-N_PROMPTS = 20
+N_PROMPTS = int(os.environ.get("N_PROMPTS", 20))
 MAX_ITERATIONS = 2
 WARM_START = True
 
@@ -118,6 +118,121 @@ def load_prompts(n: int) -> list[dict]:
     return items
 
 
+EVOLVED_SKILLS_DIR = str(REPO_ROOT / "comfyclaw" / "skills_evolved")
+LEARNED_SKILLS_DIR = os.path.join(EVOLVED_SKILLS_DIR, "learned-errors")
+
+def _collect_error_data(harness) -> list[dict]:
+    """Extract error/repair events from a completed harness run."""
+    errors = []
+    for entry in harness.evolution_log.entries:
+        for repair in entry.repair_history:
+            if repair["error"]:
+                errors.append({
+                    "iteration": entry.iteration,
+                    "phase": repair["phase"],
+                    "error": repair["error"][:500],
+                    "outcome": repair["outcome"],
+                    "rationale": entry.rationale[:300] if entry.rationale else "",
+                })
+    for attempt in harness.memory.attempts:
+        if attempt.verifier_score == 0.0:
+            for f in attempt.failed:
+                if f.startswith("Execution error:"):
+                    errors.append({
+                        "iteration": attempt.iteration,
+                        "phase": "execution",
+                        "error": f[:500],
+                        "outcome": "failed",
+                        "rationale": attempt.experience[:300],
+                    })
+    return errors
+
+
+def synthesize_learned_skill(new_errors: list[dict]) -> bool:
+    """Call the LLM to synthesize or update a learned-errors skill from error data.
+
+    Returns True if a skill was written, False if skipped.
+    """
+    import litellm
+
+    skill_dir = Path(LEARNED_SKILLS_DIR)
+    skill_path = skill_dir / "SKILL.md"
+
+    existing_body = ""
+    if skill_path.exists():
+        existing_body = skill_path.read_text(encoding="utf-8")
+
+    error_summary = "\n".join(
+        f"- [{e['phase']}] iter {e['iteration']}, outcome={e['outcome']}: {e['error'][:300]}"
+        for e in new_errors
+    )
+
+    prompt_text = (
+        "You are maintaining a ComfyUI workflow troubleshooting skill for an AI agent.\n"
+        "The agent builds and modifies ComfyUI node-graph workflows. It frequently makes "
+        "wiring and configuration errors that ComfyUI rejects. Your job is to write a concise "
+        "SKILL.md that teaches the agent to avoid these errors.\n\n"
+    )
+
+    if existing_body:
+        prompt_text += (
+            "Here is the EXISTING skill content:\n"
+            f"```\n{existing_body}\n```\n\n"
+            "NEW errors encountered since last update:\n"
+            f"{error_summary}\n\n"
+            "Update the skill to incorporate lessons from the new errors. "
+            "Merge with existing content — don't lose previously learned lessons. "
+            "Remove duplicates. Keep it concise and actionable.\n\n"
+        )
+    else:
+        prompt_text += (
+            "Errors encountered during workflow generation:\n"
+            f"{error_summary}\n\n"
+            "Create a NEW skill from these errors.\n\n"
+        )
+
+    prompt_text += (
+        "Output ONLY the complete SKILL.md content. It MUST follow this exact format:\n"
+        "1. Start with YAML frontmatter between --- delimiters\n"
+        "2. The 'name' field MUST be exactly 'learned-errors'\n"
+        "3. The 'description' field should explain when the agent should read this skill\n"
+        "4. After the frontmatter, write clear Markdown instructions\n\n"
+        "Focus on:\n"
+        "- ComfyUI node output slot indices (which slot is MODEL vs CLIP vs VAE)\n"
+        "- Common wiring mistakes and how to avoid them\n"
+        "- Parameter type constraints\n"
+        "- Patterns that cause 'string index out of range' or similar runtime errors\n\n"
+        "Keep it under 150 lines. Be specific with slot numbers and node class names."
+    )
+
+    try:
+        resp = litellm.completion(
+            model=LLM_MODEL,
+            api_key=API_KEY,
+            messages=[{"role": "user", "content": prompt_text}],
+            max_tokens=2000,
+        )
+        skill_content = resp.choices[0].message.content.strip()
+
+        if skill_content.startswith("```"):
+            skill_content = re.sub(r"^```\w*\n?", "", skill_content)
+            skill_content = re.sub(r"\n?```$", "", skill_content)
+
+        if not skill_content.startswith("---"):
+            log.warning("  Synthesized skill missing frontmatter, skipping")
+            return False
+
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path.write_text(skill_content, encoding="utf-8")
+        log.info("  Wrote learned skill to %s (%d lines)",
+                 skill_path, skill_content.count("\n") + 1)
+        return True
+
+    except Exception as exc:
+        log.warning("  Failed to synthesize learned skill: %s", exc)
+        return False
+
+
 def run_one(prompt: str, idx: int) -> dict:
     from comfyclaw.harness import ClawHarness, HarnessConfig
 
@@ -132,9 +247,10 @@ def run_one(prompt: str, idx: int) -> dict:
         image_model=CHECKPOINT,
         stage_gated=True,
         skills_dir=SKILLS_DIR,
+        evolved_skills_dir=EVOLVED_SKILLS_DIR,
         max_nodes=20,
         baseline_first=WARM_START,
-        max_images=MAX_ITERATIONS + 2,  # retain all iteration images in memory
+        max_images=MAX_ITERATIONS + 2,
     )
 
     init_wf = copy.deepcopy(BASE_WORKFLOW) if WARM_START else {}
@@ -237,6 +353,8 @@ def run_one(prompt: str, idx: int) -> dict:
 
     log.info("  Detailed results saved to %s", prompt_dir)
 
+    error_data = _collect_error_data(harness)
+
     return {
         "idx": idx,
         "prompt": prompt,
@@ -248,21 +366,46 @@ def run_one(prompt: str, idx: int) -> dict:
         "node_count": node_count,
         "iterations": len(harness.evolution_log.entries),
         "image_path": img_path,
+        "error_data": error_data,
     }
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
 
 def main():
-    log.info("=" * 70)
-    log.info("ComfyClaw Benchmark — %d GenEval2 prompts", N_PROMPTS)
+    global N_PROMPTS, MAX_ITERATIONS
+
+    parser = argparse.ArgumentParser(description="ComfyClaw benchmark / single-prompt runner")
+    parser.add_argument("--prompt", type=str, default=None,
+                        help="Run a single custom prompt instead of the GenEval2 benchmark set")
+    parser.add_argument("--max-iterations", type=int, default=None,
+                        help=f"Override max agent iterations (default: {MAX_ITERATIONS})")
+    args = parser.parse_args()
+
+    if args.max_iterations is not None:
+        MAX_ITERATIONS = args.max_iterations
+
+    if args.prompt:
+        N_PROMPTS = 1
+        prompts = [{"prompt": args.prompt}]
+        log.info("=" * 70)
+        log.info("ComfyClaw — custom prompt")
+        log.info("Prompt: %s", args.prompt)
+    else:
+        prompts = load_prompts(N_PROMPTS)
+        log.info("=" * 70)
+        log.info("ComfyClaw Benchmark — %d GenEval2 prompts", N_PROMPTS)
+
     log.info("Model: %s  Checkpoint: %s", LLM_MODEL, CHECKPOINT)
     log.info("Max iterations: %d  Warm-start: %s", MAX_ITERATIONS, WARM_START)
     log.info("=" * 70)
 
-    prompts = load_prompts(N_PROMPTS)
-    existing = load_results()
-    completed_idx = {r["idx"] for r in existing if r.get("best_score", -1) >= 0}
+    if args.prompt:
+        existing = []
+        completed_idx = set()
+    else:
+        existing = load_results()
+        completed_idx = {r["idx"] for r in existing if r.get("best_score", -1) >= 0}
 
     log.info("Prompts: %d total, %d already completed", len(prompts), len(completed_idx))
     for i, p in enumerate(prompts):
@@ -270,6 +413,7 @@ def main():
         log.info("  [%s] %2d: %s", tag, i, p["prompt"])
 
     results = list(existing)
+    pending_errors: list[dict] = []
 
     for i, item in enumerate(prompts):
         prompt = item["prompt"]
@@ -284,12 +428,29 @@ def main():
         try:
             r = run_one(prompt, i)
             results.append(r)
-            save_results(results)  # save after each prompt for resume
+            save_results(results)
             log.info("[%2d/%d] DONE  base=%.3f best=%.3f  time=%ds  nodes=%d",
                      i + 1, N_PROMPTS, r["baseline_score"], r["best_score"],
                      r["elapsed_s"], r["node_count"])
+
+            if r.get("error_data"):
+                pending_errors.extend(r["error_data"])
+                log.info("  %d error(s) encountered — synthesizing learned skill",
+                         len(r["error_data"]))
+                synthesize_learned_skill(pending_errors)
+                pending_errors.clear()
+
         except Exception as exc:
             log.error("[%2d/%d] FAILED: %s", i + 1, N_PROMPTS, exc, exc_info=True)
+            pending_errors.append({
+                "iteration": 0,
+                "phase": "crash",
+                "error": str(exc)[:500],
+                "outcome": "failed",
+                "rationale": "",
+            })
+            synthesize_learned_skill(pending_errors)
+            pending_errors.clear()
             results.append({
                 "idx": i,
                 "prompt": prompt,

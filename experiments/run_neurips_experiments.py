@@ -90,8 +90,10 @@ def run_evolution(
     with open(results_path, "r", encoding="utf-8") as f:
         results = json.load(f)
 
+    evolved_dir = str(Path(skills_dir).parent / "skills_evolved")
+
     evolver = SkillEvolver(
-        skills_dir=skills_dir,
+        evolved_skills_dir=evolved_dir,
         llm_model=model,
         api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         max_mutations_per_cycle=3,

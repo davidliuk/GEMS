@@ -33,6 +33,7 @@ import yaml
 # ---------------------------------------------------------------------------
 
 _BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent / "skills"
+_EVOLVED_SKILLS_DIR = Path(__file__).resolve().parent / "skills_evolved"
 
 
 # ---------------------------------------------------------------------------
@@ -159,13 +160,29 @@ class SkillManager:
     Parameters
     ----------
     skills_dir :
-        Path to a directory of skill sub-directories.  Pass ``None`` to use
-        the built-in skills bundled with the package.
+        Path to the primary (pre-defined) skill sub-directories.  Pass
+        ``None`` to use the built-in skills bundled with the package.
+    evolved_skills_dir :
+        Path to evolved/learned skills that are generated during benchmarks
+        and self-evolution cycles.  Pass ``None`` to use the built-in
+        ``skills_evolved/`` directory.  Set to ``""`` to disable.
     """
 
-    def __init__(self, skills_dir: str | Path | None = None) -> None:
+    def __init__(
+        self,
+        skills_dir: str | Path | None = None,
+        evolved_skills_dir: str | Path | None = None,
+    ) -> None:
         root = Path(skills_dir) if skills_dir else _BUILTIN_SKILLS_DIR
         self._root = root.resolve()
+
+        if evolved_skills_dir == "":
+            self._evolved_root: Path | None = None
+        elif evolved_skills_dir is not None:
+            self._evolved_root = Path(evolved_skills_dir).resolve()
+        else:
+            self._evolved_root = _EVOLVED_SKILLS_DIR.resolve()
+
         self._cache: dict[str, tuple[SkillProperties, str]] = {}
         self._props: dict[str, SkillProperties] = {}
         self._load_all()
@@ -175,23 +192,31 @@ class SkillManager:
     # ------------------------------------------------------------------
 
     def _load_all(self) -> None:
-        """Load all skills from the root directory (frontmatter + body)."""
-        if not self._root.is_dir():
-            return
-        for skill_dir in sorted(self._root.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            try:
-                props, body = _parse_skill_md(skill_dir)
-                self._cache[props.name] = (props, body)
-                self._props[props.name] = props
-            except ValueError as exc:
-                # Don't crash — warn and skip malformed skills
-                import warnings
+        """Load all skills from the primary and evolved directories.
 
-                warnings.warn(
-                    f"[SkillManager] Skipping skill {skill_dir.name}: {exc}", stacklevel=2
-                )
+        Evolved skills are loaded second; if an evolved skill has the same
+        name as a pre-defined one, the evolved version takes precedence.
+        """
+        dirs: list[Path] = [self._root]
+        if self._evolved_root and self._evolved_root.is_dir():
+            dirs.append(self._evolved_root)
+
+        for root in dirs:
+            if not root.is_dir():
+                continue
+            for skill_dir in sorted(root.iterdir()):
+                if not skill_dir.is_dir() or skill_dir.name.startswith("."):
+                    continue
+                try:
+                    props, body = _parse_skill_md(skill_dir)
+                    self._cache[props.name] = (props, body)
+                    self._props[props.name] = props
+                except ValueError as exc:
+                    import warnings
+
+                    warnings.warn(
+                        f"[SkillManager] Skipping skill {skill_dir.name}: {exc}", stacklevel=2
+                    )
 
     # ------------------------------------------------------------------
     # Public API

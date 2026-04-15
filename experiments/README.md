@@ -9,6 +9,7 @@ Benchmark and experiment scripts for evaluating ComfyClaw against baselines.
 - `ANTHROPIC_API_KEY` environment variable set
 - GenEval2 data (`geneval2_data.jsonl`) — override path with `GENEVAL2_DATA` env var
 - Model checkpoints installed in ComfyUI's `models/` directories
+- Run experiment `python experiments/claw_qwen_benchmark.py --evolve-batch-size 5 --max_iterations 5 --parallel 3`
 
 ## Scripts
 

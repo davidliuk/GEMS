@@ -34,7 +34,7 @@ from typing import Any
 
 import litellm
 
-from .skill_manager import SkillManager
+from .skill_manager import SkillManager, _EVOLVED_SKILLS_DIR
 from .skill_store import SkillStore
 
 log = logging.getLogger(__name__)
@@ -195,9 +195,14 @@ Rules:
 class SkillEvolver:
     """Autonomous skill evolution engine.
 
+    Evolved skills (created, updated, merged) are written to a separate
+    ``evolved_skills_dir`` so they don't mix with pre-defined skills.
+
     Parameters
     ----------
-    skills_dir : Path to the skills directory.
+    skills_dir : Path to the pre-defined skills directory (read-only source).
+    evolved_skills_dir : Path where evolved skills are stored.  Defaults to
+                         the built-in ``skills_evolved/`` directory.
     llm_model  : LLM for failure analysis and mutation proposal.
     api_key    : API key for the LLM provider.
     min_improvement : Minimum score improvement to accept a mutation.
@@ -208,7 +213,8 @@ class SkillEvolver:
 
     def __init__(
         self,
-        skills_dir: str | Path,
+        skills_dir: str | Path | None = None,
+        evolved_skills_dir: str | Path | None = None,
         llm_model: str = "anthropic/claude-sonnet-4-5",
         api_key: str = "",
         min_improvement: float = 0.02,
@@ -216,9 +222,10 @@ class SkillEvolver:
         complexity_penalty: float = 0.02,
         baseline_nodes: int = 10,
     ) -> None:
-        self.skills_dir = Path(skills_dir)
-        self.store = SkillStore(self.skills_dir)
-        self.skill_manager = SkillManager(str(self.skills_dir))
+        self.evolved_skills_dir = Path(evolved_skills_dir) if evolved_skills_dir else _EVOLVED_SKILLS_DIR
+        self.evolved_skills_dir.mkdir(parents=True, exist_ok=True)
+        self.store = SkillStore(self.evolved_skills_dir)
+        self.skill_manager = SkillManager(skills_dir, evolved_skills_dir=str(self.evolved_skills_dir))
         self.llm_model = llm_model
         self.api_key = api_key
         self.min_improvement = min_improvement
@@ -321,7 +328,7 @@ class SkillEvolver:
                             "Mutation accepted: +%.4f (%.4f -> %.4f, penalty=%.4f)",
                             improvement, pre_mean, adjusted_score, penalty,
                         )
-                        self.skill_manager = SkillManager(str(self.skills_dir))
+                        self.skill_manager = SkillManager(evolved_skills_dir=str(self.evolved_skills_dir))
                     else:
                         self._rollback_mutation(mutation)
                         rejected += 1
@@ -335,7 +342,7 @@ class SkillEvolver:
                     if self._verify_mutation_on_disk(mutation):
                         mutation.accepted = True
                         accepted += 1
-                        self.skill_manager = SkillManager(str(self.skills_dir))
+                        self.skill_manager = SkillManager(evolved_skills_dir=str(self.evolved_skills_dir))
                         log.info("Mutation accepted (disk-verified, no validation fn)")
                     else:
                         self._rollback_mutation(mutation)
@@ -690,7 +697,7 @@ class SkillEvolver:
 
         if mt == "create":
             name = changes.get("name", f"auto-{mutation.failure_cluster}")
-            skill_md = self.skills_dir / name / "SKILL.md"
+            skill_md = self.evolved_skills_dir / name / "SKILL.md"
             if not skill_md.exists():
                 log.warning("Created skill %r not found on disk", name)
                 return False
@@ -702,7 +709,7 @@ class SkillEvolver:
 
         elif mt == "update":
             for skill_name in mutation.target_skills:
-                skill_md = self.skills_dir / skill_name / "SKILL.md"
+                skill_md = self.evolved_skills_dir / skill_name / "SKILL.md"
                 if not skill_md.exists():
                     log.warning("Updated skill %r not found on disk", skill_name)
                     return False
@@ -710,7 +717,7 @@ class SkillEvolver:
 
         elif mt == "delete":
             for skill_name in mutation.target_skills:
-                skill_dir = self.skills_dir / skill_name
+                skill_dir = self.evolved_skills_dir / skill_name
                 if skill_dir.exists():
                     log.warning("Deleted skill %r still exists on disk", skill_name)
                     return False

@@ -91,6 +91,7 @@ class HarnessConfig:
     success_threshold: float = 0.85
     sync_port: int = 8765
     skills_dir: str | None = None
+    evolved_skills_dir: str | None = None
     evolve_from_best: bool = True
     max_images: int = 5
     score_weights: tuple[float, float] = field(default_factory=lambda: (0.6, 0.4))
@@ -102,6 +103,7 @@ class HarnessConfig:
     complexity_penalty: float = 0.02
     experience_db_path: str | None = None
     baseline_first: bool = False
+    cross_prompt_context: str | None = None
     """
     Pin the image-generation model (checkpoint / UNET) used by ComfyUI.
 
@@ -224,6 +226,7 @@ class ClawHarness:
             model=config.model,
             server_address=config.server_address,
             skills_dir=config.skills_dir,
+            evolved_skills_dir=config.evolved_skills_dir,
             on_change=self._on_workflow_change,
             pinned_image_model=config.image_model,
             stage_gated=config.stage_gated,
@@ -415,9 +418,14 @@ class ClawHarness:
                 verifier_feedback = prefix + (verifier_feedback or "")
                 print(f"[ClawHarness] 👤 User refinement: {user_refinement[:100]}")
 
-            memory_summary = (
-                self._memory.format_history_for_agent() if self._memory.attempts else None
-            )
+            memory_parts = []
+            if cfg.cross_prompt_context:
+                memory_parts.append(
+                    "## Lessons from Previous Prompts\n" + cfg.cross_prompt_context
+                )
+            if self._memory.attempts:
+                memory_parts.append(self._memory.format_history_for_agent())
+            memory_summary = "\n\n".join(memory_parts) if memory_parts else None
 
             print("[ClawHarness] 🤖 Agent is evolving the workflow…")
             rationale = self._agent.plan_and_patch(

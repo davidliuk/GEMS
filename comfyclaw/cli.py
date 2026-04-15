@@ -536,12 +536,12 @@ def _cmd_evolve(args: argparse.Namespace) -> None:
     with open(args.results, "r", encoding="utf-8") as f:
         results = json.load(f)
 
-    skills_dir = args.skills_dir or str(
-        Path(__file__).resolve().parent / "skills"
+    evolved_dir = args.evolved_skills_dir or str(
+        Path(__file__).resolve().parent / "skills_evolved"
     )
 
     evolver = SkillEvolver(
-        skills_dir=skills_dir,
+        evolved_skills_dir=evolved_dir,
         llm_model=args.model,
         api_key=_api_key(),
         min_improvement=args.min_improvement,
@@ -743,7 +743,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run self-evolution cycle on benchmark results",
     )
     evolve_p.add_argument("--results", required=True, help="Path to benchmark results.json")
-    evolve_p.add_argument("--skills-dir", default=None, help="Skills directory to evolve")
+    evolve_p.add_argument("--evolved-skills-dir", default=None,
+                          help="Directory for evolved skills (default: comfyclaw/skills_evolved/)")
     evolve_p.add_argument("--model", default=_env_str("COMFYCLAW_MODEL", "anthropic/claude-sonnet-4-5"))
     evolve_p.add_argument("--max-cycles", type=int, default=5)
     evolve_p.add_argument("--min-improvement", type=float, default=0.02)

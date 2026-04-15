@@ -97,7 +97,7 @@ You are an expert image quality analyst and ComfyUI workflow engineer.
 Analyze this generated image against the intended prompt, then return a JSON object with:
 {{
   "overall_assessment": "<1–2 sentence overall quality summary>",
-  "score": <0.0–1.0 quality score>,
+  "score": <integer 1–10>,
   "region_issues": [
     {{
       "region": "<specific area: foreground subject | background | face | hands | sky | texture surface | etc.>",
@@ -112,6 +112,13 @@ Analyze this generated image against the intended prompt, then return a JSON obj
     "<concrete workflow change 2>"
   ]
 }}
+
+Score rubric (integer 1–10):
+  1–2: Completely wrong — unrecognizable, no relation to prompt
+  3–4: Major failures — wrong subject, severe artifacts, missing key elements
+  5–6: Partial match — right subject but significant quality or accuracy issues
+  7–8: Good — matches prompt well with minor issues (slight artifacts, soft details)
+  9–10: Excellent — faithful to prompt, high quality, minimal or no issues
 
 Fix strategy vocabulary (use these exact strings):
   add_controlnet_canny | add_controlnet_depth | add_controlnet_normal
@@ -441,7 +448,15 @@ class ClawVerifier:
             )
             text = (resp.choices[0].message.content or "").strip()
             m = re.search(r"\{.*\}", text, re.DOTALL)
-            return json.loads(m.group() if m else text)
+            data = json.loads(m.group() if m else text)
+
+            raw = data.get("score")
+            if raw is not None:
+                raw = float(raw)
+                if raw > 1.0:
+                    data["score"] = max(0.0, min(1.0, (raw - 1) / 9.0))
+
+            return data
         except Exception as exc:
             return {
                 "overall_assessment": f"Analysis error: {exc}",
