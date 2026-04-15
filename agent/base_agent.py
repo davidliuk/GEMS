@@ -1,14 +1,15 @@
 import abc
 import requests
 import base64
-from openai import OpenAI
+import litellm
 from agent.skill_manager import SkillManager
 
+LITELLM_MODEL = "anthropic/claude-sonnet-4-6"
+
 class BaseAgent(metaclass=abc.ABCMeta):
-    def __init__(self, gen_url, mllm_url):
+    def __init__(self, gen_url, mllm_url=None):
         self.gen_url = gen_url
-        self.mllm_url = mllm_url
-        self.client = OpenAI(api_key="none", base_url=mllm_url)
+        self.model = LITELLM_MODEL
         self.skill_manager = SkillManager()
 
     def generate(self, prompt: str) -> bytes:
@@ -43,8 +44,8 @@ class BaseAgent(metaclass=abc.ABCMeta):
                 })
 
         try:
-            response = self.client.chat.completions.create(
-                model="kimi-k2.5",
+            response = litellm.completion(
+                model=self.model,
                 messages=[{"role": "user", "content": content}],
                 max_tokens=16384,
             )
@@ -73,13 +74,15 @@ class BaseAgent(metaclass=abc.ABCMeta):
                 })
 
         try:
-            response = self.client.chat.completions.create(
-                model="kimi-k2.5",
+            response = litellm.completion(
+                model=self.model,
                 messages=[{"role": "user", "content": content}],
-                max_tokens=16384,
+                thinking={"type": "enabled", "budget_tokens": 10000},
+                max_tokens=20000,
             )
-            
-            return response.choices[0].message.content,response.choices[0].message.reasoning_content
+            text = response.choices[0].message.content
+            reasoning = response.choices[0].message.reasoning_content or ""
+            return text, reasoning
         except Exception as e:
             raise Exception(f"MLLM : {e}")
 

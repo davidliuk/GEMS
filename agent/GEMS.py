@@ -2,7 +2,6 @@ import base64
 import os
 import re
 import json
-from openai import OpenAI
 from agent.base_agent import BaseAgent
 from concurrent.futures import ThreadPoolExecutor
 
@@ -68,7 +67,7 @@ PLANNER_DECISION_PROMPT = (
 )
 
 class GEMS(BaseAgent):
-    def __init__(self, gen_url, mllm_url, max_iterations):
+    def __init__(self, gen_url, mllm_url=None, max_iterations=5):
         super().__init__(gen_url, mllm_url)
         self.max_iterations = max_iterations
 

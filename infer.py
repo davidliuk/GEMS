@@ -5,10 +5,9 @@ TEST_PROMPT = "A book floating in the sky, creative and cool concept, make it lo
 
 SAVE_DIR = "infer_results"
 
-gen_url = ""
-mllm_url = ""
+gen_url = "http://localhost:8000/generate"   # local Qwen-Image server (qwen_image.py)
 max_iterations = 5
-agent = GEMS(gen_url=gen_url, mllm_url=mllm_url, max_iterations=max_iterations)
+agent = GEMS(gen_url=gen_url, max_iterations=max_iterations)
 
 def test_single_agent():
     if not os.path.exists(SAVE_DIR):

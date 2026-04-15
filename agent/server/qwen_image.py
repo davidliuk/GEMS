@@ -10,11 +10,11 @@ import io
 import uvicorn
 import asyncio
 
-NUM_GPUS = 8
+NUM_GPUS = int(os.environ.get("NUM_GPUS", 1))   # override with: NUM_GPUS=4 python ...
 RESOLUTION = 1328
 STEPS = 50
 CFG_SCALE = 4.0
-MODEL_PATH = "path/to/Qwen-Image-2512"
+MODEL_PATH = os.environ.get("MODEL_PATH", "path/to/Qwen-Image-2512")
 PORT = 8000
 
 app = FastAPI(title="Multi-GPU Image Gen API")
