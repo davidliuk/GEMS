@@ -15,7 +15,7 @@ RESOLUTION = 1024
 STEPS = 9
 CFG_SCALE = 0.0
 MODEL_PATH = os.environ.get("MODEL_PATH", "path/to/Z-Image-Turbo")
-PORT = 8001
+PORT = int(os.environ.get("PORT", 8001))
 
 app = FastAPI(title="Multi-GPU Image Gen API")
 

@@ -112,8 +112,8 @@ MODEL_PATH=/path/to/Qwen-Image-2512 NUM_GPUS=1 python agent/server/qwen_image.py
 **Start the Z-Image-Turbo server** (faster, 9 steps vs 50):
 
 ```bash
-MODEL_PATH=/path/to/Z-Image-Turbo NUM_GPUS=1 python agent/server/z_image.py
-# Starts on http://localhost:8001
+MODEL_PATH=/path/to/Z-Image-Turbo NUM_GPUS=1 PORT=8000 python agent/server/z_image.py
+# Starts on http://localhost:8000 (default port: 8001)
 ```
 
 **Verify the server is running:**
@@ -154,7 +154,7 @@ First, download the benchmark data:
 
 ```bash
 # Option A — from Hugging Face
-huggingface-cli download Jialuo21/GenEval2 --repo-type dataset --local-dir /path/to/GenEval2
+hf download Jialuo21/GenEval2 --repo-type dataset --local-dir /path/to/GenEval2
 
 # Option B — from GitHub
 git clone https://github.com/facebookresearch/GenEval2.git /path/to/GenEval2
@@ -170,18 +170,6 @@ python eval/GenEval2.py \
 ```
 
 Set `gen_url` and `mllm_url` at the top of `eval/GenEval2.py` before running.
-
-**Score GenEval2 results** (requires [Qwen3-VL-8B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-8B-Instruct)):
-
-```bash
-python eval/GenEval2_data/evaluation.py \
-    --benchmark_data eval/GenEval2_data/geneval2_data.jsonl \
-    --image_filepath_data eval/GenEval2_data/results/my_run/image_paths.json \
-    --method soft_tifa_am \
-    --output_file eval/GenEval2_data/results/my_run/scores.json
-```
-
-Available methods: `vqascore`, `tifa`, `soft_tifa_am`, `soft_tifa_gm`.
 
 **CREA:**
 
