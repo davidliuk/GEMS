@@ -133,6 +133,9 @@ Decision heuristics
   Active model contains "longcat"      → read_skill("longcat-image") FIRST.
                                          LongCat uses CFGNorm + FluxGuidance, not
                                          ModelSamplingAuraFlow. No LoRA/ControlNet.
+  Active model contains "z_image"      → read_skill("z-image-turbo") FIRST.
+                                         Z-Image uses cfg=1, sampler=res_multistep,
+                                         ConditioningZeroOut for negative. NEVER change cfg/sampler.
   Active model name contains "lcm"     → read_skill("dreamshaper8-lcm") FIRST, before
                                          any sampler tuning — LCM needs different
                                          steps/cfg/sampler than standard SD models.
@@ -1437,6 +1440,8 @@ class ClawAgent:
             (["qwen_image"],                "qwen-image-2512"),
             (["longcat_image"],             "longcat-image"),
             (["longcat-image"],             "longcat-image"),
+            (["z_image_turbo"],             "z-image-turbo"),
+            (["z_image"],                   "z-image-turbo"),
             (["dreamshaper", "lcm"],        "dreamshaper8-lcm"),
         ]
         preloaded_skill_name: str | None = None

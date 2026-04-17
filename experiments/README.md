@@ -40,21 +40,41 @@ any combination of model and benchmark through CLI flags.
 ```bash
 source .venv/bin/activate
 
-# LongCat on GenEval2, 800 prompts, evolve every 5, 2 parallel
 python experiments/run_benchmark.py \
     --model longcat --benchmark geneval2 \
     --n-prompts 800 --max-iterations 5 --evolve-batch-size 5 --parallel 2
+```
 
-# Qwen on DPG-Bench (full 1,065 prompts)
-python experiments/run_benchmark.py --model qwen --benchmark dpg-bench
+### All model × benchmark commands
 
-# DreamShaper on WISE
-python experiments/run_benchmark.py --model dreamshaper --benchmark wise
+| Model | Benchmark | Command |
+|---|---|---|
+| LongCat | GenEval2 | `python experiments/run_benchmark.py --model longcat --benchmark geneval2` |
+| LongCat | DPG-Bench | `python experiments/run_benchmark.py --model longcat --benchmark dpg-bench` |
+| LongCat | OneIG-EN | `python experiments/run_benchmark.py --model longcat --benchmark oneig-en` |
+| LongCat | OneIG-ZH | `python experiments/run_benchmark.py --model longcat --benchmark oneig-zh` |
+| LongCat | WISE | `python experiments/run_benchmark.py --model longcat --benchmark wise` |
+| Qwen | GenEval2 | `python experiments/run_benchmark.py --model qwen --benchmark geneval2` |
+| Qwen | DPG-Bench | `python experiments/run_benchmark.py --model qwen --benchmark dpg-bench` |
+| Qwen | OneIG-EN | `python experiments/run_benchmark.py --model qwen --benchmark oneig-en` |
+| Qwen | OneIG-ZH | `python experiments/run_benchmark.py --model qwen --benchmark oneig-zh` |
+| Qwen | WISE | `python experiments/run_benchmark.py --model qwen --benchmark wise` |
+| Z-Image-Turbo | GenEval2 | `python experiments/run_benchmark.py --model z-image-turbo --benchmark geneval2` |
+| Z-Image-Turbo | DPG-Bench | `python experiments/run_benchmark.py --model z-image-turbo --benchmark dpg-bench` |
+| Z-Image-Turbo | OneIG-EN | `python experiments/run_benchmark.py --model z-image-turbo --benchmark oneig-en` |
+| Z-Image-Turbo | OneIG-ZH | `python experiments/run_benchmark.py --model z-image-turbo --benchmark oneig-zh` |
+| Z-Image-Turbo | WISE | `python experiments/run_benchmark.py --model z-image-turbo --benchmark wise` |
+| DreamShaper | GenEval2 | `python experiments/run_benchmark.py --model dreamshaper --benchmark geneval2` |
+| DreamShaper | DPG-Bench | `python experiments/run_benchmark.py --model dreamshaper --benchmark dpg-bench` |
+| DreamShaper | OneIG-EN | `python experiments/run_benchmark.py --model dreamshaper --benchmark oneig-en` |
+| DreamShaper | OneIG-ZH | `python experiments/run_benchmark.py --model dreamshaper --benchmark oneig-zh` |
+| DreamShaper | WISE | `python experiments/run_benchmark.py --model dreamshaper --benchmark wise` |
 
-# LongCat on OneIG-EN (first 200 prompts)
-python experiments/run_benchmark.py --model longcat --benchmark oneig-en --n-prompts 200
+Append common flags as needed: `--n-prompts 800 --max-iterations 5 --evolve-batch-size 5 --parallel 2`
 
-# Single custom prompt (no benchmark dataset needed)
+Single custom prompt (no benchmark dataset needed):
+
+```bash
 python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
     --prompt "a red sports car parked next to a blue bicycle"
 ```
@@ -65,6 +85,7 @@ python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
 |---|---|---|
 | `--model longcat` | LongCat Image (BF16) | Flux-based (UNET + CFGNorm + FluxGuidance) |
 | `--model qwen` | Qwen Image 2512 (BF16) | AuraFlow-based (UNET + ModelSamplingAuraFlow) |
+| `--model z-image-turbo` | Z-Image-Turbo (BF16) | S3-DiT (UNET + AuraFlow, cfg=1, res_multistep) |
 | `--model dreamshaper` | DreamShaper 8 | Stable Diffusion 1.5 (single checkpoint) |
 
 ### Supported benchmarks
@@ -81,7 +102,7 @@ python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
 
 | Flag | Default | Description |
 |---|---|---|
-| `--model` | *required* | Image generation model (`longcat`, `qwen`, `dreamshaper`) |
+| `--model` | *required* | Image generation model (`longcat`, `qwen`, `z-image-turbo`, `dreamshaper`) |
 | `--benchmark` | *required* | Benchmark dataset (`geneval2`, `dpg-bench`, `oneig-en`, `oneig-zh`, `wise`) |
 | `--prompt` | — | Run a single custom prompt instead of the benchmark set |
 | `--n-prompts` | benchmark default | Number of prompts to run |
