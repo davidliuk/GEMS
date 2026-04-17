@@ -96,15 +96,16 @@ python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
 The runner automatically creates isolated directories per model+benchmark combination:
 
 ```
-../benchmark_{model}_{benchmark}/          # results.json + images/
-../benchmark_{model}_{benchmark}_detailed/  # per-prompt details, SFT traces
-comfyclaw/skills_evolved_benchmark_{model}_{benchmark}/  # evolved skills (isolated per run)
+../benchmark_{model}_{benchmark}/                    # results.json + images/
+../benchmark_{model}_{benchmark}_detailed/            # per-prompt details, SFT traces
+comfyclaw/evolved_skills/{model}_{benchmark}/         # evolved skills (isolated per run)
+comfyclaw/evolved_skills/{model}_{benchmark}/learned-errors/  # auto-synthesized error skills
 ```
 
 For example, `--model longcat --benchmark dpg-bench` produces:
 - `../benchmark_longcat_dpg-bench/`
 - `../benchmark_longcat_dpg-bench_detailed/`
-- `comfyclaw/skills_evolved_benchmark_longcat_dpg-bench/`
+- `comfyclaw/evolved_skills/longcat_dpg-bench/`
 
 Override with `OUTPUT_DIR` / `DETAILED_DIR` environment variables if needed.
 

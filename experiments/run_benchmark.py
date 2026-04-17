@@ -59,7 +59,8 @@ def _build_paths(model_short: str, bench_short: str) -> dict:
     base = f"benchmark_{model_short}_{bench_short}"
     output_dir = os.environ.get("OUTPUT_DIR", str(REPO_ROOT.parent / base))
     detailed_dir = os.environ.get("DETAILED_DIR", str(REPO_ROOT.parent / f"{base}_detailed"))
-    evolved_dir = str(REPO_ROOT / "comfyclaw" / f"skills_evolved_{os.path.basename(output_dir.rstrip('/'))}")
+    evolved_root = REPO_ROOT / "comfyclaw" / "evolved_skills"
+    evolved_dir = str(evolved_root / f"{model_short}_{bench_short}")
     return {
         "output_dir": output_dir,
         "detailed_dir": detailed_dir,
