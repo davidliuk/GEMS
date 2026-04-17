@@ -131,32 +131,38 @@ python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
 | `--no-warm-start` | `false` | Start from empty workflow instead of model's base workflow |
 | `--data-path` | auto-detected | Override path to benchmark data file/directory |
 | `--comfyui-addrs` | `127.0.0.1:8188` | Comma-separated ComfyUI addresses for multi-instance parallelism |
+| `--agent-name` | auto from `LLM_MODEL` | Agent/LLM name for organizing output folders |
 
 ### Output directories
 
-The runner automatically creates isolated directories per model+benchmark combination:
+The runner automatically creates isolated directories per model+benchmark+agent combination:
 
 ```
 experiments_output/                                    # top-level output root
 ├── {model}_{benchmark}/                               # one folder per experiment
-│   ├── results/                                       # results.json + images/
-│   └── detailed/                                      # per-prompt details, SFT traces
+│   ├── {agent_name}/                                  # sub-folder per LLM agent
+│   │   ├── results/                                   # results.json + images/
+│   │   └── detailed/                                  # per-prompt details, SFT traces
+│   └── ...
 └── ...
 
 comfyclaw/evolved_skills/                              # evolved skills (inside repo)
 ├── {model}_{benchmark}/                               # isolated per experiment
-│   └── learned-errors/                                # auto-synthesized error skills
+│   ├── {agent_name}/                                  # sub-folder per LLM agent
+│   │   └── learned-errors/                            # auto-synthesized error skills
+│   └── ...
 └── ...
 ```
 
-For example, `--model longcat --benchmark dpg-bench` produces:
-- `/workspace/experiments_output/longcat_dpg-bench/results/`
-- `/workspace/experiments_output/longcat_dpg-bench/detailed/`
-- `comfyclaw/evolved_skills/longcat_dpg-bench/`
+The `{agent_name}` is auto-derived from `LLM_MODEL` (e.g. `claude-sonnet-4-5`, `gpt-5-4`)
+or set explicitly with `--agent-name`.
+
+For example, `--model longcat --benchmark dpg-bench` with `LLM_MODEL=anthropic/claude-sonnet-4-5`:
+- `experiments_output/longcat_dpg-bench/claude-sonnet-4-5/results/`
+- `experiments_output/longcat_dpg-bench/claude-sonnet-4-5/detailed/`
+- `comfyclaw/evolved_skills/longcat_dpg-bench/claude-sonnet-4-5/`
 
 Override the output root with `EXPERIMENTS_ROOT` env var, or individual dirs with `OUTPUT_DIR` / `DETAILED_DIR`.
-
-Override with `OUTPUT_DIR` / `DETAILED_DIR` environment variables if needed.
 
 ### Usage examples
 
@@ -195,7 +201,39 @@ python experiments/run_benchmark.py --model longcat --benchmark dpg-bench \
 - ComfyUI running and accessible (default: `127.0.0.1:8188`). For multi-instance
   GPU parallelism, see [Multi-Instance GPU Parallelism](#multi-instance-gpu-parallelism) below.
 - In ComfyUI, do `python main.py --listen 127.0.0.1 --port 8188`
-- `ANTHROPIC_API_KEY` environment variable set
+- LLM API key set (`LLM_API_KEY` or `ANTHROPIC_API_KEY`)
+
+### Using alternative LLM providers
+
+The benchmark runner supports any LLM accessible via [litellm](https://docs.litellm.ai/),
+including OpenAI, NVIDIA NIM, Azure, and other OpenAI-compatible APIs.
+
+```bash
+# NVIDIA Inference API (GPT-5.4 via NVIDIA NIM)
+export LLM_API_KEY="your-nvidia-api-key"
+export LLM_API_BASE="https://inference-api.nvidia.com"
+export LLM_MODEL="openai/azure/openai/gpt-5.4"
+python experiments/run_benchmark.py --model longcat --benchmark geneval2 --agent-name gpt-5.4
+
+# OpenAI directly
+export LLM_API_KEY="sk-..."
+export LLM_MODEL="openai/gpt-4o"
+python experiments/run_benchmark.py --model longcat --benchmark geneval2
+
+# Anthropic (default)
+export ANTHROPIC_API_KEY="sk-ant-..."
+python experiments/run_benchmark.py --model longcat --benchmark geneval2
+```
+
+The `--agent-name` flag (or auto-derived from `LLM_MODEL`) determines the output
+subfolder, so results from different agents are kept separate:
+
+```
+experiments_output/longcat_geneval2/
+├── claude-sonnet-4-5/    # default agent
+├── gpt-5.4/              # --agent-name gpt-5.4
+└── gpt-4o/               # auto-derived from openai/gpt-4o
+```
 
 ### Automated setup (recommended)
 
@@ -360,10 +398,14 @@ All scripts support these environment variables:
 | `N_PROMPTS` | benchmark default | Number of prompts |
 | `OUTPUT_DIR` | `../benchmark_{model}_{benchmark}` | Output directory for results |
 | `DETAILED_DIR` | `../benchmark_{model}_{benchmark}_detailed` | Per-prompt detailed results |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key |
+| `LLM_API_KEY` | — | API key for the LLM provider (falls back to `ANTHROPIC_API_KEY`) |
+| `LLM_API_BASE` | — | Base URL for OpenAI-compatible LLM endpoints (e.g. `https://inference-api.nvidia.com`) |
+| `LLM_MODEL` | `anthropic/claude-sonnet-4-5` | LLM model name (litellm format, e.g. `openai/gpt-4o`, `azure/openai/gpt-5.4`) |
+| `ANTHROPIC_API_KEY` | — | Anthropic API key (legacy, prefer `LLM_API_KEY`) |
 | `COMFYUI_ADDR` | `127.0.0.1:8188` | ComfyUI server address (single instance, legacy) |
 | `COMFYUI_ADDRS` | — | Comma-separated ComfyUI addresses for multi-instance parallelism |
-| `LLM_MODEL` | `anthropic/claude-sonnet-4-5` | LLM for the agent and verifier |
+| `LLM_NUM_RETRIES` | `3` | Number of retries on rate-limit or timeout errors |
+| `LLM_REQUEST_TIMEOUT` | `300` | Request timeout in seconds per LLM call |
 | `GENEVAL2_DATA` | `../GenEval2/geneval2_data.jsonl` | Path to GenEval2 prompt data |
 | `DPG_BENCH_DATA` | `../DPG-Bench/prompts.jsonl` | Path to DPG-Bench prompt data |
 | `ONEIG_EN_DATA` | `../OneIG-Bench/OneIG-Bench.json` | Path to OneIG-Bench (EN) data |

@@ -190,7 +190,8 @@ class ClawVerifier:
         weighted_requirements: bool = False,
     ) -> None:
         if api_key:
-            os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
+            from .agent import _set_llm_api_key
+            _set_llm_api_key(api_key, model)
         self.model = model
         self.score_weights = score_weights
         self.max_workers = max_workers

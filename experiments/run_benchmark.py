@@ -41,9 +41,27 @@ from experiments.models import MODELS
 from experiments.benchmarks import BENCHMARKS
 
 # ── Config (env overridable) ──────────────────────────────────────────────
-API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 LLM_MODEL = os.environ.get("LLM_MODEL", "anthropic/claude-sonnet-4-5")
+LLM_API_KEY = os.environ.get("LLM_API_KEY") or os.environ.get("ANTHROPIC_API_KEY", "")
+LLM_API_BASE = os.environ.get("LLM_API_BASE", "")
 SKILLS_DIR = str(REPO_ROOT / "comfyclaw" / "skills")
+
+if LLM_API_BASE:
+    os.environ.setdefault("OPENAI_API_BASE", LLM_API_BASE)
+
+# ── LiteLLM retry/timeout config ─────────────────────────────────────────
+import litellm
+litellm.num_retries = int(os.environ.get("LLM_NUM_RETRIES", "3"))
+litellm.request_timeout = int(os.environ.get("LLM_REQUEST_TIMEOUT", "300"))
+litellm.retry_after = 5  # seconds between retries (with jitter)
+litellm.drop_params = True  # silently drop unsupported params per provider
+
+
+def _agent_slug(model: str) -> str:
+    """Derive a short slug from the LLM model name for folder naming."""
+    name = model.rsplit("/", 1)[-1]
+    name = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    return name
 
 
 def _parse_comfyui_addrs() -> list[str]:
@@ -72,12 +90,18 @@ def _slug(text: str, max_len: int = 50) -> str:
 EXPERIMENTS_ROOT = Path(os.environ.get("EXPERIMENTS_ROOT", str(REPO_ROOT.parent / "comfy_agent_experiments_output")))
 
 
-def _build_paths(model_short: str, bench_short: str) -> dict:
-    experiment_dir = EXPERIMENTS_ROOT / f"{model_short}_{bench_short}"
+def _build_paths(model_short: str, bench_short: str, agent_name: str = "") -> dict:
+    if agent_name:
+        experiment_dir = EXPERIMENTS_ROOT / f"{model_short}_{bench_short}" / agent_name
+    else:
+        experiment_dir = EXPERIMENTS_ROOT / f"{model_short}_{bench_short}"
     output_dir = os.environ.get("OUTPUT_DIR", str(experiment_dir / "results"))
     detailed_dir = os.environ.get("DETAILED_DIR", str(experiment_dir / "detailed"))
     evolved_root = REPO_ROOT / "comfyclaw" / "evolved_skills"
-    evolved_dir = str(evolved_root / f"{model_short}_{bench_short}")
+    if agent_name:
+        evolved_dir = str(evolved_root / f"{model_short}_{bench_short}" / agent_name)
+    else:
+        evolved_dir = str(evolved_root / f"{model_short}_{bench_short}")
     return {
         "output_dir": output_dir,
         "detailed_dir": detailed_dir,
@@ -195,7 +219,8 @@ def synthesize_learned_skill(new_errors: list[dict], learned_dir: str) -> bool:
     try:
         resp = litellm.completion(
             model=LLM_MODEL,
-            api_key=API_KEY,
+            api_key=LLM_API_KEY,
+            **({"api_base": LLM_API_BASE} if LLM_API_BASE else {}),
             messages=[{"role": "user", "content": prompt_text}],
             max_tokens=2000,
         )
@@ -236,7 +261,7 @@ def run_one(
 
     t0 = time.time()
     cfg = HarnessConfig(
-        api_key=API_KEY,
+        api_key=LLM_API_KEY,
         server_address=server_address,
         model=LLM_MODEL,
         max_iterations=max_iterations,
@@ -401,7 +426,7 @@ def run_batch_evolution(results: list[dict], cycle: int, evolved_dir: str) -> No
     evolver = SkillEvolver(
         evolved_skills_dir=evolved_dir,
         llm_model=LLM_MODEL,
-        api_key=API_KEY,
+        api_key=LLM_API_KEY,
         min_improvement=0.02,
         max_mutations_per_cycle=3,
     )
@@ -446,11 +471,16 @@ def main():
     parser.add_argument("--comfyui-addrs", type=str, default=None,
                         help="Comma-separated ComfyUI addresses (e.g. 127.0.0.1:8188,127.0.0.1:8189). "
                              "Also settable via COMFYUI_ADDRS env var. Defaults to single instance on :8188")
+    parser.add_argument("--agent-name", type=str, default=None,
+                        help="Agent/LLM name for organizing output folders (e.g. 'gpt-5.4'). "
+                             "Auto-derived from LLM_MODEL if not set. Results go to "
+                             "{model}_{benchmark}/{agent_name}/")
     args = parser.parse_args()
 
     model_config = MODELS[args.model]
     bench_config = BENCHMARKS[args.benchmark]
-    paths = _build_paths(model_config["short_name"], bench_config["short_name"])
+    agent_name = args.agent_name or _agent_slug(LLM_MODEL)
+    paths = _build_paths(model_config["short_name"], bench_config["short_name"], agent_name)
 
     n_prompts = args.n_prompts or int(os.environ.get("N_PROMPTS", bench_config["default_n_prompts"]))
     max_iterations = args.max_iterations
@@ -482,7 +512,9 @@ def main():
         log.info("ComfyClaw + %s on %s — %d prompts",
                  model_config["name"], bench_config["name"], n_prompts)
 
-    log.info("LLM: %s  Diffusion: %s", LLM_MODEL, model_config["name"])
+    log.info("LLM: %s  Agent: %s  Diffusion: %s", LLM_MODEL, agent_name, model_config["name"])
+    if LLM_API_BASE:
+        log.info("LLM API base: %s", LLM_API_BASE)
     log.info("ComfyUI instances: %d  [%s]", len(comfyui_addrs), ", ".join(comfyui_addrs))
     log.info("Max iterations: %d  Warm-start: %s  Evolve batch: %s  Parallel: %d",
              max_iterations, warm_start,

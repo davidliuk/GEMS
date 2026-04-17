@@ -35,6 +35,17 @@ from .stage_router import StageRouter
 from .workflow import WorkflowManager
 
 
+def _set_llm_api_key(api_key: str, model: str = "") -> None:
+    """Propagate the API key into the right env var for litellm."""
+    if api_key.startswith("sk-ant-") or model.startswith("anthropic/"):
+        os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
+    elif model.startswith("openai/") or model.startswith("azure/"):
+        os.environ.setdefault("OPENAI_API_KEY", api_key)
+    else:
+        os.environ.setdefault("OPENAI_API_KEY", api_key)
+        os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
+
+
 def _abbreviate_tool_args(tool_name: str, args: dict) -> dict:
     """Return a small dict suitable for the thinking-log UI.
 
@@ -653,14 +664,8 @@ class ClawAgent:
         pinned_image_model: str | None = None,
         stage_gated: bool = False,
     ) -> None:
-        # Propagate the API key into the environment so LiteLLM picks it up.
-        # For Anthropic keys (sk-ant-…) we set ANTHROPIC_API_KEY; for other
-        # providers users should set the appropriate env-var themselves.
         if api_key:
-            if api_key.startswith("sk-ant-"):
-                os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
-            else:
-                os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
+            _set_llm_api_key(api_key, model)
         self.model = model
         self.server_address = server_address
         self.skill_manager = SkillManager(skills_dir, evolved_skills_dir=evolved_skills_dir)

@@ -234,7 +234,8 @@ class SkillEvolver:
         self.baseline_nodes = baseline_nodes
 
         if api_key:
-            os.environ.setdefault("ANTHROPIC_API_KEY", api_key)
+            from .agent import _set_llm_api_key
+            _set_llm_api_key(api_key, llm_model)
 
     # ------------------------------------------------------------------
     # Public API

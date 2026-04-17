@@ -1,9 +1,9 @@
 {
-  "benchmark": "dpg-bench",
+  "benchmark": "oneig-en",
   "image_model": "LongCat Image (BF16)",
   "agent_model": "anthropic/claude-sonnet-4-5",
   "n_prompts": 800,
   "max_iterations": 4,
   "evolve_batch_size": 5,
-  "updated_at": "2026-04-17T23:04:23+0000"
+  "updated_at": "2026-04-17T23:05:47+0000"
 }
