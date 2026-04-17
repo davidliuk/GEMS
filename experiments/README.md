@@ -7,6 +7,7 @@ Benchmark and experiment scripts for evaluating ComfyClaw against baselines.
 ```
 experiments/
 ├── run_benchmark.py              # Unified entry point (recommended)
+├── launch_comfyui.sh             # Launch multiple ComfyUI instances for GPU parallelism
 ├── setup.py                      # Auto-download models + benchmark datasets
 ├── models/
 │   ├── __init__.py               # Auto-discovers and loads YAML configs
@@ -114,6 +115,7 @@ python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
 | `--parallel` | `1` | Run N prompts concurrently |
 | `--no-warm-start` | `false` | Start from empty workflow instead of model's base workflow |
 | `--data-path` | auto-detected | Override path to benchmark data file/directory |
+| `--comfyui-addrs` | `127.0.0.1:8188` | Comma-separated ComfyUI addresses for multi-instance parallelism |
 
 ### Output directories
 
@@ -175,7 +177,8 @@ python experiments/run_benchmark.py --model longcat --benchmark dpg-bench \
 
 ## Prerequisites
 
-- ComfyUI running and accessible (default: `127.0.0.1:8188`)
+- ComfyUI running and accessible (default: `127.0.0.1:8188`). For multi-instance
+  GPU parallelism, see [Multi-Instance GPU Parallelism](#multi-instance-gpu-parallelism) below.
 - In ComfyUI, do `python main.py --listen 127.0.0.1 --port 8188`
 - `ANTHROPIC_API_KEY` environment variable set
 
@@ -253,6 +256,76 @@ hf download Lykon/DreamShaper DreamShaper_8_pruned.safetensors --local-dir "$COM
 
 Then restart ComfyUI so it picks up the new models.
 
+## Multi-Instance GPU Parallelism
+
+By default, all parallel threads share one ComfyUI instance, so image generation
+is serialized on the GPU even when `--parallel` is set. If your GPU has enough VRAM,
+you can launch multiple ComfyUI instances to generate images in true parallel.
+
+### Memory budget
+
+Each model instance uses roughly:
+
+| Model | VRAM per instance |
+|---|---|
+| LongCat Image (BF16) | ~27 GB |
+| Qwen Image (BF16) | ~25 GB |
+| Z-Image-Turbo (BF16) | ~22 GB |
+| DreamShaper 8 (SD 1.5) | ~4 GB |
+
+For example, on a 96 GB GPU you can run 3 LongCat instances (3 × 27 GB = 81 GB).
+
+### Launching multiple instances
+
+Use the provided launch script:
+
+```bash
+# Launch 3 ComfyUI instances on ports 8188, 8189, 8190
+./experiments/launch_comfyui.sh 3
+
+# Custom base port
+./experiments/launch_comfyui.sh 3 8200
+
+# Custom ComfyUI path
+COMFYUI_DIR=/path/to/ComfyUI ./experiments/launch_comfyui.sh 3
+```
+
+The script waits for all instances to be ready and prints the `COMFYUI_ADDRS` line to use.
+
+### Running benchmarks with multiple instances
+
+Pass the addresses via `--comfyui-addrs` or the `COMFYUI_ADDRS` env var. Work is
+distributed round-robin across instances.
+
+```bash
+# Via CLI flag
+python experiments/run_benchmark.py --model longcat --benchmark dpg-bench \
+    --n-prompts 800 --max-iterations 4 --parallel 3 \
+    --comfyui-addrs 127.0.0.1:8188,127.0.0.1:8189,127.0.0.1:8190
+
+# Via env var
+export COMFYUI_ADDRS=127.0.0.1:8188,127.0.0.1:8189,127.0.0.1:8190
+python experiments/run_benchmark.py --model longcat --benchmark dpg-bench --parallel 3
+```
+
+### Running multiple benchmarks concurrently
+
+When running two benchmarks at the same time, dedicate separate instances to each
+run so they don't contend for the same GPU queue:
+
+```bash
+# Terminal 1 — dpg-bench on instance :8188
+python experiments/run_benchmark.py --model longcat --benchmark dpg-bench \
+    --parallel 1 --comfyui-addrs 127.0.0.1:8188
+
+# Terminal 2 — geneval2 on instances :8189 and :8190
+python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
+    --parallel 2 --comfyui-addrs 127.0.0.1:8189,127.0.0.1:8190
+```
+
+The legacy `COMFYUI_ADDR` env var (single address) is still supported for backwards
+compatibility.
+
 ## Other Scripts
 
 | Script | Description |
@@ -273,7 +346,8 @@ All scripts support these environment variables:
 | `OUTPUT_DIR` | `../benchmark_{model}_{benchmark}` | Output directory for results |
 | `DETAILED_DIR` | `../benchmark_{model}_{benchmark}_detailed` | Per-prompt detailed results |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key |
-| `COMFYUI_ADDR` | `127.0.0.1:8188` | ComfyUI server address |
+| `COMFYUI_ADDR` | `127.0.0.1:8188` | ComfyUI server address (single instance, legacy) |
+| `COMFYUI_ADDRS` | — | Comma-separated ComfyUI addresses for multi-instance parallelism |
 | `LLM_MODEL` | `anthropic/claude-sonnet-4-5` | LLM for the agent and verifier |
 | `GENEVAL2_DATA` | `../GenEval2/geneval2_data.jsonl` | Path to GenEval2 prompt data |
 | `DPG_BENCH_DATA` | `../DPG-Bench/prompts.jsonl` | Path to DPG-Bench prompt data |
