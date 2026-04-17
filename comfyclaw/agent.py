@@ -185,6 +185,30 @@ Node parameter constraints (DO NOT violate)
   set weight_dtype to "default" and do not attempt further dtype changes.
   LoRA class is "LoraLoader" (not LoRALoader).
   ControlNet apply class is "ControlNetApplyAdvanced".
+
+Available workflow tools (use ONLY these — no others exist)
+-----------------------------------------------------------
+  inspect_workflow          — view all nodes, IDs, and inputs
+  query_available_models    — list checkpoints, LoRAs, controlnets, etc.
+  set_param                 — set a scalar input: set_param(node_id, param_name, value)
+  set_prompt                — set positive/negative prompt text (no node ID needed)
+  add_node                  — add a new node: add_node(class_type, nickname, inputs={...})
+  connect_nodes             — wire output to input: connect_nodes(src_node_id, src_output_index, dst_node_id, dst_input_name)
+  delete_node               — remove a node by ID
+  add_lora_loader           — insert LoRA between model/clip source and consumers
+  add_controlnet            — add ControlNet loader + apply node
+  add_regional_attention    — split conditioning into foreground/background
+  add_hires_fix             — add upscale + second KSampler pass
+  add_inpaint_pass          — add targeted inpaint for a region
+  report_evolution_strategy — declare your plan before making changes
+  validate_workflow         — check graph for errors before finalizing
+  finalize_workflow         — signal all modifications are complete
+  read_skill                — load a skill's full instructions on demand
+  explore_nodes             — discover ComfyUI node classes
+  transition_stage          — advance pipeline stage
+
+Do NOT invent tool names. If a tool call fails, re-read this list and retry
+with the correct name and parameters.
 """
 
 _PINNED_MODEL_SECTION = """\
@@ -530,6 +554,67 @@ _TOOLS: list[dict] = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# Tool-call normalisation (reduce hallucination)
+# ---------------------------------------------------------------------------
+
+_TOOL_ALIASES: dict[str, str] = {
+    "update_node": "set_param",
+    "modify_node": "set_param",
+    "set_node_param": "set_param",
+    "edit_node": "set_param",
+    "modify_param": "set_param",
+    "set_input": "set_param",
+    "change_param": "set_param",
+    "set_params": "set_param",
+    "get_node": "inspect_workflow",
+    "get_available_tools": "inspect_workflow",
+    "list_tools": "inspect_workflow",
+    "modify_prompt": "set_prompt",
+    "set_positive_prompt": "set_prompt",
+    "set_negative_prompt": "set_prompt",
+    "wire": "connect_nodes",
+    "connect": "connect_nodes",
+    "rewire": "connect_nodes",
+    "remove_node": "delete_node",
+    "replace_node": "delete_node",
+}
+
+_ARG_ALIASES: dict[str, dict[str, str]] = {
+    "set_param": {
+        "param": "param_name",
+        "field": "param_name",
+        "parameter": "param_name",
+        "input_name": "param_name",
+        "key": "param_name",
+        "param_value": "value",
+        "new_value": "value",
+    },
+    "connect_nodes": {
+        "src_slot": "src_output_index",
+        "src_slot_index": "src_output_index",
+        "src_slot_idx": "src_output_index",
+        "src_output_slot": "src_output_index",
+        "source_node_id": "src_node_id",
+        "source_id": "src_node_id",
+        "source_node": "src_node_id",
+        "target_node_id": "dst_node_id",
+        "target_id": "dst_node_id",
+        "target_node": "dst_node_id",
+        "dest_node_id": "dst_node_id",
+        "target_input_name": "dst_input_name",
+        "target_input": "dst_input_name",
+        "target_param": "dst_input_name",
+        "target_field": "dst_input_name",
+        "dest_input_name": "dst_input_name",
+        "dst_input": "dst_input_name",
+        "dst_field": "dst_input_name",
+        "source_slot": "src_output_index",
+        "source_output_index": "src_output_index",
+        "source_slot_index": "src_output_index",
+    },
+}
+
 
 # ---------------------------------------------------------------------------
 # Agent
@@ -718,6 +803,10 @@ class ClawAgent:
 
     def _dispatch(self, name: str, inputs: dict, wm: WorkflowManager) -> tuple[str, bool]:
         """Route a single tool call. Returns ``(result_text, should_stop)``."""
+        name = _TOOL_ALIASES.get(name, name)
+        if name in _ARG_ALIASES:
+            alias_map = _ARG_ALIASES[name]
+            inputs = {alias_map.get(k, k): v for k, v in inputs.items()}
         try:
             match name:
                 case "inspect_workflow":
@@ -755,10 +844,16 @@ class ClawAgent:
                     )
 
                 case "add_node":
+                    raw_inputs = inputs.get("inputs") or {}
+                    if isinstance(raw_inputs, str):
+                        try:
+                            raw_inputs = json.loads(raw_inputs)
+                        except json.JSONDecodeError:
+                            raw_inputs = {}
                     nid = wm.add_node(
                         inputs["class_type"],
                         inputs.get("nickname"),
-                        **(inputs.get("inputs") or {}),
+                        **raw_inputs,
                     )
                     self._notify(wm)
                     return f"✅ Added node {nid} ({inputs['class_type']})", False
@@ -842,7 +937,12 @@ class ClawAgent:
                     return self._transition_stage(inputs), False
 
                 case _:
-                    return f"❌ Unknown tool: {name}", False
+                    valid = ", ".join(t["function"]["name"] for t in _TOOLS)
+                    return (
+                        f"❌ Unknown tool: {name}. "
+                        f"Available tools: {valid}. "
+                        f"Re-read the tool list and use the correct name."
+                    ), False
 
         except Exception as exc:
             return f"❌ Tool error ({name}): {exc}", False
