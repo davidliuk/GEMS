@@ -48,8 +48,9 @@ def _slug(text: str, max_len: int = 50) -> str:
 
 # ── LongCat Image base workflow (API format) ──────────────────────────────
 #
-# Pipeline: UNETLoader → ModelSamplingAuraFlow → KSampler
-#           CLIPLoader → CLIPTextEncode (pos) + CLIPTextEncode (neg)
+# Pipeline: UNETLoader → CFGNorm → KSampler
+#           CLIPLoader → CLIPTextEncode (pos) → FluxGuidance → KSampler
+#           CLIPLoader → CLIPTextEncode (neg) → FluxGuidance → KSampler
 #           VAELoader → VAEDecode
 #           EmptySD3LatentImage → KSampler
 #
@@ -74,19 +75,19 @@ LONGCAT_BASE_WORKFLOW = {
     "3": {
         "class_type": "VAELoader",
         "inputs": {
-            "vae_name": "qwen_image_vae.safetensors",
+            "vae_name": "ae.safetensors",
         },
         "_meta": {"title": "VAE Loader"},
     },
-    "5": {
-        "class_type": "ModelSamplingAuraFlow",
+    "4": {
+        "class_type": "CFGNorm",
         "inputs": {
             "model": ["1", 0],
-            "shift": 3.1,
+            "strength": 1.0,
         },
-        "_meta": {"title": "Model Sampling AuraFlow"},
+        "_meta": {"title": "CFG Norm"},
     },
-    "6": {
+    "5": {
         "class_type": "CLIPTextEncode",
         "inputs": {
             "clip": ["2", 0],
@@ -94,32 +95,48 @@ LONGCAT_BASE_WORKFLOW = {
         },
         "_meta": {"title": "Positive Prompt"},
     },
+    "6": {
+        "class_type": "FluxGuidance",
+        "inputs": {
+            "conditioning": ["5", 0],
+            "guidance": 4.0,
+        },
+        "_meta": {"title": "Positive FluxGuidance"},
+    },
     "7": {
         "class_type": "CLIPTextEncode",
         "inputs": {
             "clip": ["2", 0],
-            "text": "low resolution, low quality, deformed limbs, deformed fingers, oversaturated, wax figure, faceless, overly smooth, AI feel, cluttered composition, blurry text, distorted",
+            "text": "blurry, low resolution, oversaturated, harsh lighting, messy composition, distorted face, extra fingers, bad anatomy, watermark",
         },
         "_meta": {"title": "Negative Prompt"},
     },
     "8": {
-        "class_type": "EmptySD3LatentImage",
+        "class_type": "FluxGuidance",
         "inputs": {
-            "width": 1344,
-            "height": 768,
-            "batch_size": 1,
+            "conditioning": ["7", 0],
+            "guidance": 4.0,
         },
-        "_meta": {"title": "Empty Latent (1344x768)"},
+        "_meta": {"title": "Negative FluxGuidance"},
     },
     "9": {
+        "class_type": "EmptySD3LatentImage",
+        "inputs": {
+            "width": 1024,
+            "height": 1024,
+            "batch_size": 1,
+        },
+        "_meta": {"title": "Empty Latent (1024x1024)"},
+    },
+    "10": {
         "class_type": "KSampler",
         "inputs": {
-            "model": ["5", 0],
+            "model": ["4", 0],
             "positive": ["6", 0],
-            "negative": ["7", 0],
-            "latent_image": ["8", 0],
+            "negative": ["8", 0],
+            "latent_image": ["9", 0],
             "seed": 42,
-            "steps": 50,
+            "steps": 20,
             "cfg": 4.0,
             "sampler_name": "euler",
             "scheduler": "simple",
@@ -127,18 +144,18 @@ LONGCAT_BASE_WORKFLOW = {
         },
         "_meta": {"title": "KSampler"},
     },
-    "10": {
+    "11": {
         "class_type": "VAEDecode",
         "inputs": {
-            "samples": ["9", 0],
+            "samples": ["10", 0],
             "vae": ["3", 0],
         },
         "_meta": {"title": "VAE Decode"},
     },
-    "11": {
+    "12": {
         "class_type": "SaveImage",
         "inputs": {
-            "images": ["10", 0],
+            "images": ["11", 0],
             "filename_prefix": "LongCatClaw",
         },
         "_meta": {"title": "Save Image"},
@@ -169,7 +186,8 @@ def load_prompts(n: int) -> list[dict]:
     return items
 
 
-EVOLVED_SKILLS_DIR = str(REPO_ROOT / "comfyclaw" / "skills_evolved")
+_output_basename = os.path.basename(OUTPUT_DIR.rstrip("/"))
+EVOLVED_SKILLS_DIR = str(REPO_ROOT / "comfyclaw" / f"skills_evolved_{_output_basename}")
 LEARNED_SKILLS_DIR = os.path.join(EVOLVED_SKILLS_DIR, "learned-errors")
 
 
