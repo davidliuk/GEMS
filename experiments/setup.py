@@ -114,6 +114,8 @@ def download_model_files(
     comfyui_dir: Path,
     dry_run: bool = False,
 ) -> None:
+    import tempfile
+
     from huggingface_hub import hf_hub_download
 
     files = MODEL_FILES[model]
@@ -137,21 +139,19 @@ def download_model_files(
         dest_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            downloaded = hf_hub_download(
-                repo_id=repo_id,
-                filename=hf_path,
-                local_dir=str(dest_dir / ".hf_tmp"),
-            )
-            downloaded_path = Path(downloaded)
-            shutil.move(str(downloaded_path), str(dest_path))
-
-            tmp_dir = dest_dir / ".hf_tmp"
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                downloaded = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=hf_path,
+                    local_dir=tmp_dir,
+                )
+                shutil.move(str(downloaded), str(dest_path))
 
             size_mb = dest_path.stat().st_size / (1024 * 1024)
             log.info("  OK %s (%.0f MB)", dest_path, size_mb)
         except Exception as exc:
+            if dest_path.exists():
+                dest_path.unlink()
             log.error("  FAILED %s: %s", filename, exc)
             raise
 
