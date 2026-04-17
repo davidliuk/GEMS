@@ -1,9 +1,0 @@
-{
-  "benchmark": "claw_longcat_benchmark",
-  "image_model": "LongCat Image (BF16)",
-  "agent_model": "anthropic/claude-sonnet-4-5",
-  "n_prompts": 800,
-  "max_iterations": 5,
-  "evolve_batch_size": 5,
-  "updated_at": "2026-04-17T15:00:03+0000"
-}

@@ -1,9 +1,0 @@
-{
-  "benchmark": "claw_qwen_benchmark",
-  "image_model": "Qwen Image 2512 (BF16)",
-  "agent_model": "anthropic/claude-sonnet-4-5",
-  "n_prompts": 800,
-  "max_iterations": 5,
-  "evolve_batch_size": 5,
-  "updated_at": "2026-04-16T20:48:58+0000"
-}
