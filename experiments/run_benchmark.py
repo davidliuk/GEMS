@@ -55,10 +55,13 @@ def _slug(text: str, max_len: int = 50) -> str:
 
 # ── Paths derived from model + benchmark ──────────────────────────────────
 
+EXPERIMENTS_ROOT = Path(os.environ.get("EXPERIMENTS_ROOT", str(REPO_ROOT.parent / "comfy_agent_experiments_output")))
+
+
 def _build_paths(model_short: str, bench_short: str) -> dict:
-    base = f"benchmark_{model_short}_{bench_short}"
-    output_dir = os.environ.get("OUTPUT_DIR", str(REPO_ROOT.parent / base))
-    detailed_dir = os.environ.get("DETAILED_DIR", str(REPO_ROOT.parent / f"{base}_detailed"))
+    experiment_dir = EXPERIMENTS_ROOT / f"{model_short}_{bench_short}"
+    output_dir = os.environ.get("OUTPUT_DIR", str(experiment_dir / "results"))
+    detailed_dir = os.environ.get("DETAILED_DIR", str(experiment_dir / "detailed"))
     evolved_root = REPO_ROOT / "comfyclaw" / "evolved_skills"
     evolved_dir = str(evolved_root / f"{model_short}_{bench_short}")
     return {

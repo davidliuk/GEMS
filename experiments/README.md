@@ -96,16 +96,24 @@ python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
 The runner automatically creates isolated directories per model+benchmark combination:
 
 ```
-../benchmark_{model}_{benchmark}/                    # results.json + images/
-../benchmark_{model}_{benchmark}_detailed/            # per-prompt details, SFT traces
-comfyclaw/evolved_skills/{model}_{benchmark}/         # evolved skills (isolated per run)
-comfyclaw/evolved_skills/{model}_{benchmark}/learned-errors/  # auto-synthesized error skills
+experiments_output/                                    # top-level output root
+├── {model}_{benchmark}/                               # one folder per experiment
+│   ├── results/                                       # results.json + images/
+│   └── detailed/                                      # per-prompt details, SFT traces
+└── ...
+
+comfyclaw/evolved_skills/                              # evolved skills (inside repo)
+├── {model}_{benchmark}/                               # isolated per experiment
+│   └── learned-errors/                                # auto-synthesized error skills
+└── ...
 ```
 
 For example, `--model longcat --benchmark dpg-bench` produces:
-- `../benchmark_longcat_dpg-bench/`
-- `../benchmark_longcat_dpg-bench_detailed/`
+- `/workspace/experiments_output/longcat_dpg-bench/results/`
+- `/workspace/experiments_output/longcat_dpg-bench/detailed/`
 - `comfyclaw/evolved_skills/longcat_dpg-bench/`
+
+Override the output root with `EXPERIMENTS_ROOT` env var, or individual dirs with `OUTPUT_DIR` / `DETAILED_DIR`.
 
 Override with `OUTPUT_DIR` / `DETAILED_DIR` environment variables if needed.
 
