@@ -1,0 +1,89 @@
+# Qwen Image 2512 (BF16) — Alibaba's text-to-image model
+# Architecture: UNET + ModelSamplingAuraFlow
+
+name: "Qwen Image 2512 (BF16)"
+short_name: qwen
+default_node_count: 10
+
+workflow:
+  "1":
+    class_type: UNETLoader
+    inputs:
+      unet_name: qwen_image_bf16.safetensors
+      weight_dtype: default
+    _meta: { title: UNET Loader }
+
+  "2":
+    class_type: CLIPLoader
+    inputs:
+      clip_name: qwen_2.5_vl_7b.safetensors
+      type: qwen_image
+      device: default
+    _meta: { title: CLIP Loader }
+
+  "3":
+    class_type: VAELoader
+    inputs:
+      vae_name: qwen_image_vae.safetensors
+    _meta: { title: VAE Loader }
+
+  "5":
+    class_type: ModelSamplingAuraFlow
+    inputs:
+      model: ["1", 0]
+      shift: 3.1
+    _meta: { title: Model Sampling AuraFlow }
+
+  "6":
+    class_type: CLIPTextEncode
+    inputs:
+      clip: ["2", 0]
+      text: ""
+    _meta: { title: Positive Prompt }
+
+  "7":
+    class_type: CLIPTextEncode
+    inputs:
+      clip: ["2", 0]
+      text: >-
+        low resolution, low quality, deformed limbs, deformed fingers,
+        oversaturated, wax figure, faceless, overly smooth, AI feel,
+        cluttered composition, blurry text, distorted
+    _meta: { title: Negative Prompt }
+
+  "8":
+    class_type: EmptySD3LatentImage
+    inputs:
+      width: 1328
+      height: 1328
+      batch_size: 1
+    _meta: { title: "Empty Latent (1328x1328)" }
+
+  "9":
+    class_type: KSampler
+    inputs:
+      model: ["5", 0]
+      positive: ["6", 0]
+      negative: ["7", 0]
+      latent_image: ["8", 0]
+      seed: 42
+      steps: 25
+      cfg: 4.0
+      sampler_name: euler
+      scheduler: simple
+      denoise: 1.0
+    _meta: { title: KSampler }
+
+  "10":
+    class_type: VAEDecode
+    inputs:
+      samples: ["9", 0]
+      vae: ["3", 0]
+    _meta: { title: VAE Decode }
+
+  "11":
+    class_type: SaveImage
+    inputs:
+      images: ["10", 0]
+      filename_prefix: QwenClaw
+    _meta: { title: Save Image }

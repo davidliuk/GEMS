@@ -1,0 +1,16 @@
+# OneIG-Bench (Chinese) — omni-dimensional evaluation for image generation
+# Same categories as OneIG-EN plus Multilingualism (200 prompts)
+# Data: OneIG-Bench-ZH.json with fields {category, id, prompt_en}
+# Repo: https://github.com/OneIG-Bench/OneIG-Benchmark
+# HF:   https://huggingface.co/datasets/OneIG-Bench/OneIG-Bench
+
+name: "OneIG-Bench (ZH)"
+short_name: oneig-zh
+default_n_prompts: 1320
+
+data:
+  env_var: ONEIG_ZH_DATA
+  default_path: ../OneIG-Bench/OneIG-Bench-ZH.json
+  format: json_array
+  prompt_field: prompt_en    # key is "prompt_en" even for Chinese prompts
+  prompt_field_fallback: prompt_zh

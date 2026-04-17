@@ -1,0 +1,13 @@
+# GenEval2 — 800 compositional text-to-image prompts (Meta FAIR)
+# Data: geneval2_data.jsonl with fields {prompt, atom_count, vqa_list, skills}
+# Repo: https://github.com/facebookresearch/GenEval2
+
+name: GenEval2
+short_name: geneval2
+default_n_prompts: 800
+
+data:
+  env_var: GENEVAL2_DATA
+  default_path: ../GenEval2/geneval2_data.jsonl
+  format: jsonl
+  prompt_field: prompt

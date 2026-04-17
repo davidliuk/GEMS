@@ -1,0 +1,16 @@
+# OneIG-Bench (English) — omni-dimensional evaluation for image generation
+# Categories: Anime & Stylization (245), Portrait (244), General Object (206),
+#             Text Rendering (200), Knowledge & Reasoning (225)
+# Data: OneIG-Bench.json with fields {category, id, prompt_en, type, prompt_length, class}
+# Repo: https://github.com/OneIG-Bench/OneIG-Benchmark
+# HF:   https://huggingface.co/datasets/OneIG-Bench/OneIG-Bench
+
+name: "OneIG-Bench (EN)"
+short_name: oneig-en
+default_n_prompts: 1120
+
+data:
+  env_var: ONEIG_EN_DATA
+  default_path: ../OneIG-Bench/OneIG-Bench.json
+  format: json_array
+  prompt_field: prompt_en

@@ -1,0 +1,63 @@
+# DreamShaper 8 — Stable Diffusion 1.5 checkpoint (single-file loader)
+
+name: "DreamShaper 8 (SD 1.5)"
+short_name: dreamshaper
+default_node_count: 7
+
+workflow:
+  "1":
+    class_type: CheckpointLoaderSimple
+    inputs:
+      ckpt_name: DreamShaper_8_pruned.safetensors
+    _meta: { title: Load Checkpoint }
+
+  "2":
+    class_type: CLIPTextEncode
+    inputs:
+      clip: ["1", 1]
+      text: ""
+    _meta: { title: Positive Prompt }
+
+  "3":
+    class_type: CLIPTextEncode
+    inputs:
+      clip: ["1", 1]
+      text: "blurry, ugly, deformed, low quality"
+    _meta: { title: Negative Prompt }
+
+  "4":
+    class_type: EmptyLatentImage
+    inputs:
+      width: 512
+      height: 512
+      batch_size: 1
+    _meta: { title: Empty Latent }
+
+  "5":
+    class_type: KSampler
+    inputs:
+      model: ["1", 0]
+      positive: ["2", 0]
+      negative: ["3", 0]
+      latent_image: ["4", 0]
+      seed: 42
+      steps: 25
+      cfg: 7.0
+      sampler_name: dpmpp_2m
+      scheduler: karras
+      denoise: 1.0
+    _meta: { title: KSampler }
+
+  "6":
+    class_type: VAEDecode
+    inputs:
+      samples: ["5", 0]
+      vae: ["1", 2]
+    _meta: { title: VAE Decode }
+
+  "7":
+    class_type: SaveImage
+    inputs:
+      images: ["6", 0]
+      filename_prefix: ComfyClaw
+    _meta: { title: Save Image }

@@ -8,20 +8,17 @@ Benchmark and experiment scripts for evaluating ComfyClaw against baselines.
 experiments/
 ├── run_benchmark.py              # Unified entry point (recommended)
 ├── models/
-│   ├── __init__.py               # Registry: MODELS dict
-│   ├── longcat.py                # LongCat Image (BF16) — Flux-based workflow
-│   ├── qwen.py                   # Qwen Image 2512 (BF16) — AuraFlow-based workflow
-│   └── dreamshaper.py            # DreamShaper 8 — SD 1.5 single-checkpoint workflow
+│   ├── __init__.py               # Auto-discovers and loads YAML configs
+│   ├── longcat.yaml              # LongCat Image (BF16) — Flux-based workflow
+│   ├── qwen.yaml                 # Qwen Image 2512 (BF16) — AuraFlow-based workflow
+│   └── dreamshaper.yaml          # DreamShaper 8 — SD 1.5 single-checkpoint workflow
 ├── benchmarks/
-│   ├── __init__.py               # Registry: BENCHMARKS dict
-│   ├── geneval2.py               # GenEval2 loader (800 prompts, JSONL)
-│   ├── dpg_bench.py              # DPG-Bench loader (1,065 prompts, JSONL or .txt dir)
-│   ├── oneig_en.py               # OneIG-Bench EN loader (1,120 prompts, JSON)
-│   ├── oneig_zh.py               # OneIG-Bench ZH loader (1,320 prompts, JSON)
-│   └── wise.py                   # WISE loader (1,000 prompts, JSON or JSONL)
-├── claw_qwen_benchmark.py        # Legacy: standalone Qwen benchmark
-├── claw_longcat_benchmark.py     # Legacy: standalone LongCat benchmark
-├── claw_benchmark.py             # Legacy: standalone DreamShaper benchmark
+│   ├── __init__.py               # Auto-discovers and loads YAML configs
+│   ├── geneval2.yaml             # GenEval2 (800 prompts, JSONL)
+│   ├── dpg-bench.yaml            # DPG-Bench (1,065 prompts, JSONL or .txt dir)
+│   ├── oneig-en.yaml             # OneIG-Bench EN (1,120 prompts, JSON)
+│   ├── oneig-zh.yaml             # OneIG-Bench ZH (1,320 prompts, JSON)
+│   └── wise.yaml                 # WISE (1,000 prompts, JSON or JSONL)
 ├── gems_vs_comfyclaw.py          # GEMS vs ComfyClaw comparison
 ├── prepare_sft_data.py           # Post-process SFT traces for fine-tuning
 ├── full_experiment.py            # Full NeurIPS experiment pipeline
@@ -30,8 +27,8 @@ experiments/
 └── README.md
 ```
 
-To add a new model, create a file in `models/` and register it in `models/__init__.py`.
-To add a new benchmark, create a file in `benchmarks/` and register it in `benchmarks/__init__.py`.
+To add a new model, drop a `.yaml` file in `models/` — it's auto-discovered by `short_name`.
+To add a new benchmark, drop a `.yaml` file in `benchmarks/` — it's auto-discovered by `short_name`.
 
 ## Unified Benchmark Runner
 
@@ -115,20 +112,6 @@ Override with `OUTPUT_DIR` / `DETAILED_DIR` environment variables if needed.
 
 ```bash
 source .venv/bin/activate
-
-# ── Migrating from legacy scripts ─────────────────────────────────────
-
-# Before (legacy):
-N_PROMPTS=800 python experiments/claw_longcat_benchmark.py --max-iterations 5 --evolve-batch-size 5 --parallel 2
-# After (unified):
-python experiments/run_benchmark.py --model longcat --benchmark geneval2 \
-    --n-prompts 800 --max-iterations 5 --evolve-batch-size 5 --parallel 2
-
-# Before (legacy):
-N_PROMPTS=800 python experiments/claw_qwen_benchmark.py --max-iterations 5 --evolve-batch-size 5 --parallel 2
-# After (unified):
-python experiments/run_benchmark.py --model qwen --benchmark geneval2 \
-    --n-prompts 800 --max-iterations 5 --evolve-batch-size 5 --parallel 2
 
 # ── Cross-model × cross-benchmark ─────────────────────────────────────
 
@@ -239,15 +222,10 @@ Download `DreamShaper_8_pruned.safetensors` from [Lykon/DreamShaper](https://hug
 
 Then restart ComfyUI so it picks up the new models.
 
-## Legacy Scripts
-
-These standalone benchmark scripts still work but the unified runner is preferred:
+## Other Scripts
 
 | Script | Description |
 |---|---|
-| `claw_benchmark.py` | ComfyClaw benchmark — DreamShaper, warm-start + baseline_first |
-| `claw_qwen_benchmark.py` | ComfyClaw benchmark with Qwen Image 2512 |
-| `claw_longcat_benchmark.py` | ComfyClaw benchmark with LongCat Image |
 | `gems_vs_comfyclaw.py` | GEMS vs ComfyClaw comparison on 10 GenEval2 prompts |
 | `prepare_sft_data.py` | Post-process raw SFT traces into training-ready JSONL |
 | `full_experiment.py` | Full NeurIPS experiment pipeline |
@@ -276,21 +254,14 @@ All scripts support these environment variables:
 
 ```bash
 source .venv/bin/activate
-
-# Unified runner (recommended)
 python experiments/run_benchmark.py --model longcat --benchmark geneval2
-
-# Legacy scripts still work
-python experiments/claw_qwen_benchmark.py
-python experiments/claw_longcat_benchmark.py
-python experiments/claw_benchmark.py
 ```
 
 All benchmark scripts support **resume**: completed prompts are cached to disk and skipped on re-run.
 
 ## SFT Data Collection
 
-The Qwen benchmark (`claw_qwen_benchmark.py`) automatically captures full agent conversation traces for supervised fine-tuning. Each trace records the complete multi-turn tool-use conversation (system prompt, user message, every tool call with full arguments, every tool result untruncated) in OpenAI chat format.
+The benchmark runner automatically captures full agent conversation traces for supervised fine-tuning. Each trace records the complete multi-turn tool-use conversation (system prompt, user message, every tool call with full arguments, every tool result untruncated) in OpenAI chat format.
 
 **Raw traces** are saved automatically during benchmark runs:
 

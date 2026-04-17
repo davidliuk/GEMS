@@ -847,9 +847,10 @@ comfyclaw/
 │       └── ...
 ├── experiments/                Benchmark & experiment scripts
 │   ├── README.md
+│   ├── run_benchmark.py        Unified benchmark runner (all models × all benchmarks)
+│   ├── models/                 Model workflow configs (longcat, qwen, dreamshaper)
+│   ├── benchmarks/             Benchmark loaders (geneval2, dpg-bench, oneig-en/zh, wise)
 │   ├── gems_vs_comfyclaw.py    GEMS vs ComfyClaw comparison
-│   ├── claw_benchmark.py       ComfyClaw-only 20-prompt benchmark
-│   ├── claw_qwen_benchmark.py  Qwen Image 2512 benchmark
 │   └── full_experiment.py      Full NeurIPS experiment pipeline
 └── tests/                      192 tests (all offline, < 1 s)
     ├── test_agent.py

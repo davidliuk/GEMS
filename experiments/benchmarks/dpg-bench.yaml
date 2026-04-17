@@ -1,0 +1,13 @@
+# DPG-Bench — 1,065 dense prompts for text-to-image adherence evaluation
+# Data: HuggingFace dataset Jialuo21/DPG-Bench (parquet) or local text files
+# Repo: https://github.com/TencentQQGYLab/ELLA/tree/main/dpg_bench
+
+name: DPG-Bench
+short_name: dpg-bench
+default_n_prompts: 1065
+
+data:
+  env_var: DPG_BENCH_DATA
+  default_path: ../DPG-Bench/prompts.jsonl
+  format: jsonl_or_txtdir    # supports JSONL file or directory of .txt files
+  prompt_field: prompt

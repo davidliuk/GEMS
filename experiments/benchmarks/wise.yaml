@@ -1,0 +1,16 @@
+# WISE — World Knowledge-Informed Semantic Evaluation (1,000 prompts)
+# Categories: Cultural Common Sense (1-400), Time (401-567), Space (568-700),
+#             Biology (701-800), Physics (801-900), Chemistry (901-1000)
+# Data: prompts.json — list of objects with {prompt_id, prompt} or JSONL
+# Repo: https://github.com/PKU-YuanGroup/WISE
+
+name: WISE
+short_name: wise
+default_n_prompts: 1000
+
+data:
+  env_var: WISE_DATA
+  default_path: ../WISE/prompts.json
+  format: json_or_jsonl      # auto-detects JSON array vs JSONL
+  prompt_field: prompt
+  prompt_field_fallback: text
