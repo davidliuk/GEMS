@@ -27,6 +27,7 @@ import sys
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass, field
 
 import litellm
 
@@ -139,14 +140,19 @@ Decision heuristics
   Workflow is EMPTY (no nodes)          → read_skill("workflow-builder") FIRST.
                                          Then query_available_models to pick arch.
   Workflow contains QwenImageModelLoader → read_skill("qwen-image-2512") FIRST.
-                                         Qwen has NO KSampler/ControlNet/LoRA —
-                                         all tuning is on RH_QwenImageGenerator.
+                                         Qwen: LoRA = LoraLoaderModelOnly;
+                                         ControlNet = ModelPatchLoader +
+                                         QwenImageDiffsynthControlnet (model-patch,
+                                         requires a reference image).
   Active model contains "longcat"      → read_skill("longcat-image") FIRST.
                                          LongCat uses CFGNorm + FluxGuidance, not
-                                         ModelSamplingAuraFlow. No LoRA/ControlNet.
+                                         ModelSamplingAuraFlow. LoRA/ControlNet
+                                         NOT supported via standard tools.
   Active model contains "z_image"      → read_skill("z-image-turbo") FIRST.
                                          Z-Image uses cfg=1, sampler=res_multistep,
                                          ConditioningZeroOut for negative. NEVER change cfg/sampler.
+                                         LoRA: LoraLoaderModelOnly;
+                                         CN: ModelPatchLoader + ZImageFunControlnet.
   Active model name contains "lcm"     → read_skill("dreamshaper8-lcm") FIRST, before
                                          any sampler tuning — LCM needs different
                                          steps/cfg/sampler than standard SD models.
@@ -194,8 +200,16 @@ Node parameter constraints (DO NOT violate)
                             Never use "fp16" or "fp32" — causes HTTP 400.
   Apple MPS cannot run FP8 models. If you see a Float8_e4m3fn MPS error,
   set weight_dtype to "default" and do not attempt further dtype changes.
-  LoRA class is "LoraLoader" (not LoRALoader).
-  ControlNet apply class is "ControlNetApplyAdvanced".
+  LoRA class is "LoraLoader" for SD/SDXL/Flux, "LoraLoaderModelOnly" for MMDiT/S3-DiT
+  (Qwen-Image-2512, Z-Image-Turbo). The add_lora_loader tool selects the correct node
+  automatically based on the detected architecture.
+  ControlNet apply class is "ControlNetApplyAdvanced" for SD/SDXL/Flux (conditioning-patch).
+  For Qwen-Image-2512 and Z-Image-Turbo, ControlNet is a MODEL patch: the loader is
+  "ModelPatchLoader" and the apply node is "QwenImageDiffsynthControlnet" /
+  "ZImageFunControlnet". add_controlnet handles this automatically and REQUIRES an
+  image_node_id (the control signal). No union_type argument for these nodes.
+  LongCat-Image does NOT support LoRA or ControlNet via standard tools — use set_param
+  to tune steps/guidance_scale; read_skill("longcat-image") for enhancement options.
 
 Available workflow tools (use ONLY these — no others exist)
 -----------------------------------------------------------
@@ -339,7 +353,11 @@ _TOOLS: list[dict] = [
     _tool(
         "add_lora_loader",
         (
-            "Insert a LoraLoader between the model/clip source and all downstream consumers. "
+            "Insert a LoRA loader between the model source and all downstream consumers. "
+            "For SD/SDXL/Flux pipelines: uses LoraLoader (MODEL + CLIP), clip_node_id required. "
+            "For Qwen-Image-2512 / Z-Image-Turbo (MMDiT/S3-DiT): uses LoraLoaderModelOnly (MODEL only), "
+            "clip_node_id is ignored. "
+            "Not applicable for LongCat-Image (pipeline-based arch, no MODEL tensor exposed). "
             "Call query_available_models('loras') first."
         ),
         {
@@ -347,18 +365,28 @@ _TOOLS: list[dict] = [
             "properties": {
                 "lora_name": {"type": "string"},
                 "strength_model": {"type": "number"},
-                "strength_clip": {"type": "number"},
+                "strength_clip": {"type": "number", "description": "Ignored for Qwen pipelines"},
                 "model_node_id": {"type": "string"},
-                "clip_node_id": {"type": "string"},
+                "clip_node_id": {
+                    "type": "string",
+                    "description": "Required for SD/SDXL/Flux. Omit or leave empty for Qwen.",
+                },
             },
-            "required": ["lora_name", "model_node_id", "clip_node_id"],
+            "required": ["lora_name", "model_node_id"],
         },
     ),
     _tool(
         "add_controlnet",
         (
-            "Add ControlNetLoader + optional preprocessor + ControlNetApplyAdvanced. "
-            "Call query_available_models('controlnets') first."
+            "Add a ControlNet branch to the workflow. "
+            "For SD/SDXL/Flux: uses ControlNetLoader + ControlNetApplyAdvanced "
+            "(conditioning-patch; wraps positive/negative before KSampler). "
+            "For Qwen-Image-2512 / Z-Image-Turbo: uses ModelPatchLoader + the matching "
+            "Fun/Diffsynth Controlnet node (QwenImageDiffsynthControlnet / "
+            "ZImageFunControlnet) which patch the MODEL directly and require a "
+            "reference image (image_node_id). "
+            "Not applicable for LongCat-Image. "
+            "Call query_available_models('controlnets') and ('model_patches') first."
         ),
         {
             "type": "object",
@@ -371,6 +399,15 @@ _TOOLS: list[dict] = [
                 "strength": {"type": "number"},
                 "start_percent": {"type": "number"},
                 "end_percent": {"type": "number"},
+                "union_type": {
+                    "type": "string",
+                    "description": (
+                        "Only used for ControlNet Union variants on SD/SDXL/Flux. "
+                        "Ignored for Qwen-Image-2512 / Z-Image-Turbo (their patch "
+                        "nodes have no union_type input — the control mode is fixed "
+                        "by the patch file itself)."
+                    ),
+                },
             },
             "required": [
                 "controlnet_name",
@@ -630,6 +667,113 @@ _ARG_ALIASES: dict[str, dict[str, str]] = {
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Architecture registry
+# ---------------------------------------------------------------------------
+# Each entry describes one non-standard model architecture.
+# Adding support for a new arch = add one ArchConfig here + write a SKILL.md.
+# Standard SD/SDXL/Flux falls through (arch is None) and uses the defaults.
+
+@dataclass
+class ArchConfig:
+    # --- Detection ---
+    # Keywords checked against UNETLoader's unet_name (lower-cased)
+    unet_keywords: tuple[str, ...]
+    # ComfyUI class_type values that unambiguously identify the arch
+    node_classes: frozenset[str]
+    # Keywords checked against CLIPLoader's type param (lower-cased)
+    clip_type_keywords: tuple[str, ...]
+
+    # --- Skill routing ---
+    skill_name: str          # injected into Suggested Skills when arch is detected
+    description: str         # shown in "## Active Model" in the system context
+
+    # --- LoRA ---
+    lora_node: str           # ComfyUI class_type for the LoRA loader node
+    lora_needs_clip: bool    # True → LoraLoader (MODEL+CLIP); False → model-only
+
+    # --- ControlNet ---
+    # cn_style selects the wiring pattern:
+    #   "conditioning"  → ControlNetLoader + apply node wrap positive/negative
+    #                     (standard SD/SDXL/Flux). Used when arch_cfg is None;
+    #                     registered archs may also opt in.
+    #   "model_patch"   → ModelPatchLoader + single patch node that takes
+    #                     (model, model_patch, vae, image, strength) → MODEL,
+    #                     then rewires all downstream consumers of the source
+    #                     MODEL to consume from the patched output. Used by
+    #                     Qwen-Image-2512 (QwenImageDiffsynthControlnet) and
+    #                     Z-Image-Turbo (ZImageFunControlnet).
+    cn_style: str = "conditioning"
+    cn_loader_node: str = ""  # class_type for CN / patch loader
+    cn_apply_node: str = ""   # class_type for CN apply / patch node
+    cn_strength_param: str = "strength"  # input name for strength
+    cn_has_union_type: bool = False      # whether the apply node takes union_type
+
+    # --- Feature flags (optional, default True for backward compat) ---
+    lora_supported: bool = True   # False for pipeline-based models with no MODEL tensor
+    cn_supported: bool = True     # False for pipeline-based models with no KSampler
+
+
+ARCH_REGISTRY: dict[str, ArchConfig] = {
+    "qwen_image": ArchConfig(
+        unet_keywords=("qwen_image",),
+        node_classes=frozenset({"QwenImageModelLoader", "RH_QwenImageGenerator"}),
+        clip_type_keywords=("qwen_image",),
+        skill_name="qwen-image-2512",
+        description=(
+            "Qwen-Image-2512 (20B MMDiT — LoraLoaderModelOnly for LoRA, "
+            "ModelPatchLoader + QwenImageDiffsynthControlnet for ControlNet; "
+            "only use ControlNet weights trained for Qwen-Image-2512)"
+        ),
+        lora_node="LoraLoaderModelOnly",
+        lora_needs_clip=False,
+        cn_style="model_patch",
+        cn_loader_node="ModelPatchLoader",
+        cn_apply_node="QwenImageDiffsynthControlnet",
+        cn_strength_param="strength",
+        cn_has_union_type=False,
+    ),
+    "z_image": ArchConfig(
+        unet_keywords=("z_image",),
+        node_classes=frozenset(),
+        # This ComfyUI uses CLIPLoader type "lumina2" for Z-Image-Turbo; some
+        # older forks used "qwen3_4b". Keep both so detection is robust.
+        clip_type_keywords=("lumina2", "qwen3_4b"),
+        skill_name="z-image-turbo",
+        description=(
+            "Z-Image-Turbo (6B S3-DiT — LoraLoaderModelOnly for LoRA, "
+            "ModelPatchLoader + ZImageFunControlnet for ControlNet; "
+            "only use ControlNet weights trained for Z-Image-Turbo)"
+        ),
+        lora_node="LoraLoaderModelOnly",
+        lora_needs_clip=False,
+        cn_style="model_patch",
+        cn_loader_node="ModelPatchLoader",
+        cn_apply_node="ZImageFunControlnet",
+        cn_strength_param="strength",
+        cn_has_union_type=False,
+    ),
+    "longcat_image": ArchConfig(
+        # Detection: the custom loader class_type is unambiguous
+        unet_keywords=("longcat",),
+        node_classes=frozenset({"LongCatImageModelLoader"}),
+        clip_type_keywords=(),
+        skill_name="longcat-image",
+        description=(
+            "LongCat-Image (6B by Meituan — custom pipeline nodes: "
+            "LongCatImageModelLoader → LongCatImageTextToImage; "
+            "use set_param for steps/guidance_scale; "
+            "LoRA and ControlNet are not available via standard tools for this arch)"
+        ),
+        # LoRA/CN fields unused (lora_supported=False, cn_supported=False)
+        lora_node="",
+        lora_needs_clip=False,
+        lora_supported=False,
+        cn_supported=False,
+    ),
+}
 
 
 class ClawAgent:
@@ -1052,6 +1196,29 @@ class ClawAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _detect_arch(wm: WorkflowManager) -> ArchConfig | None:
+        """Detect a registered non-standard architecture from the workflow.
+
+        Returns the matching ArchConfig, or None for standard SD/SDXL/Flux
+        pipelines (which use LoraLoader + ControlNetApplyAdvanced).
+        """
+        for cfg in ARCH_REGISTRY.values():
+            for node in wm.workflow.values():
+                ct = node.get("class_type", "")
+                if ct in cfg.node_classes:
+                    return cfg
+                inp = node.get("inputs", {})
+                if ct == "UNETLoader":
+                    name = str(inp.get("unet_name", "")).lower()
+                    if any(kw in name for kw in cfg.unet_keywords):
+                        return cfg
+                if ct == "CLIPLoader":
+                    clip_type = str(inp.get("type", "")).lower()
+                    if any(kw in clip_type for kw in cfg.clip_type_keywords):
+                        return cfg
+        return None
+
+    @staticmethod
     def _detect_clip_slot(wm: WorkflowManager, node_id: str) -> int:
         """Return the output slot index that carries CLIP for *node_id*.
 
@@ -1080,11 +1247,48 @@ class ClawAgent:
     def _add_lora(self, wm: WorkflowManager, inputs: dict) -> str:
         lora_name = inputs["lora_name"]
         model_nid = str(inputs["model_node_id"])
-        clip_nid = str(inputs["clip_node_id"])
         sm = float(inputs.get("strength_model", 0.8))
+        arch = self._detect_arch(wm)
+
+        if arch is not None and not arch.lora_supported:
+            return (
+                f"⚠️ LoRA is not supported for {arch.skill_name}. "
+                "This architecture uses custom pipeline nodes and does not expose a MODEL tensor. "
+                "Read the skill for alternative enhancement strategies."
+            )
+
+        if arch is not None and not arch.lora_needs_clip:
+            # Model-only LoRA (Qwen, Z-Image, any future MMDiT/S3-DiT arch).
+            lora_nid = wm.add_node(
+                arch.lora_node,
+                f"LoRA: {lora_name[:30]}",
+                model=[model_nid, 0],
+                lora_name=lora_name,
+                strength_model=sm,
+            )
+            self._notify(wm)
+
+            rewired_model = []
+            for nid, node in wm.workflow.items():
+                if nid == lora_nid:
+                    continue
+                for inp_name, inp_val in list(node.get("inputs", {}).items()):
+                    if isinstance(inp_val, list) and len(inp_val) == 2:
+                        src_id, src_idx = str(inp_val[0]), inp_val[1]
+                        if src_id == model_nid and src_idx == 0 and inp_name == "model":
+                            wm.workflow[nid]["inputs"][inp_name] = [lora_nid, 0]
+                            rewired_model.append(f"{nid}.{inp_name}")
+
+            self._notify(wm)
+            return (
+                f"✅ {arch.lora_node} {lora_nid} ({lora_name}, sm={sm})\n"
+                f"   Re-wired model: {rewired_model}"
+            )
+
+        # Standard SD/SDXL/Flux: LoraLoader (MODEL + CLIP).
+        clip_nid = str(inputs["clip_node_id"])
         sc = float(inputs.get("strength_clip", 0.8))
 
-        # Determine correct output slots for the source nodes.
         # CheckpointLoaderSimple: slot 0=MODEL, slot 1=CLIP, slot 2=VAE
         # LoraLoader / UNETLoader / CLIPLoader: slot 0 is the primary output
         model_slot = 0
@@ -1131,14 +1335,18 @@ class ClawAgent:
         strength = float(inputs.get("strength", 0.7))
         start_pct = float(inputs.get("start_percent", 0.0))
         end_pct = float(inputs.get("end_percent", 1.0))
+        arch = self._detect_arch(wm)
 
-        cn_loader_nid = wm.add_node(
-            "ControlNetLoader", f"CN: {cn_name[:25]}", control_net_name=cn_name
-        )
-        self._notify(wm)
+        if arch is not None and not arch.cn_supported:
+            return (
+                f"⚠️ ControlNet is not supported for {arch.skill_name}. "
+                "This architecture uses custom pipeline nodes with no KSampler to wire conditioning into. "
+                "Read the skill for available enhancement strategies."
+            )
 
-        preproc_output = None
+        # Optional preprocessor — shared by both branches.
         preproc_nid = None
+        preproc_output = None
         if preproc_cls and image_nid:
             preproc_nid = wm.add_node(preproc_cls, preproc_cls, image=[image_nid, 0])
             preproc_output = [preproc_nid, 0]
@@ -1146,7 +1354,166 @@ class ClawAgent:
         elif image_nid:
             preproc_output = [image_nid, 0]
 
-        apply_inputs: dict = {
+        if arch is not None and arch.cn_style == "model_patch":
+            # Qwen-Image-2512, Z-Image-Turbo:
+            #   ModelPatchLoader(name=<fun cn file>) → MODEL_PATCH
+            #   <arch.cn_apply_node>(model, model_patch, vae, image, strength) → MODEL
+            # Rewire all existing consumers of the current KSampler-model source to
+            # instead consume from the patched MODEL output.
+            if not image_nid:
+                return (
+                    f"⚠️ ControlNet for {arch.skill_name} requires image_node_id "
+                    "(the control signal). Supply a LoadImage node or image source."
+                )
+
+            # Locate the current MODEL source that feeds the KSampler.
+            model_src_id: str | None = None
+            model_src_slot = 0
+            for nid, node in wm.workflow.items():
+                if node.get("class_type") == "KSampler":
+                    m = node.get("inputs", {}).get("model")
+                    if isinstance(m, list) and len(m) == 2:
+                        model_src_id = str(m[0])
+                        model_src_slot = int(m[1])
+                        break
+            if model_src_id is None:
+                return (
+                    f"⚠️ ControlNet for {arch.skill_name}: no KSampler with a model "
+                    "input found. Add a sampler first, or use set_param."
+                )
+
+            # Locate VAE source.
+            vae_src_id: str | None = None
+            vae_src_slot = 0
+            for nid, node in wm.workflow.items():
+                if node.get("class_type") == "VAELoader":
+                    vae_src_id = nid
+                    vae_src_slot = 0
+                    break
+            if vae_src_id is None:
+                for nid, node in wm.workflow.items():
+                    if node.get("class_type") in ("CheckpointLoaderSimple", "CheckpointLoader"):
+                        vae_src_id = nid
+                        vae_src_slot = 2
+                        break
+            if vae_src_id is None:
+                return (
+                    f"⚠️ ControlNet for {arch.skill_name}: no VAELoader in workflow. "
+                    "Add a VAELoader before applying ControlNet."
+                )
+
+            patch_loader_nid = wm.add_node(
+                arch.cn_loader_node,  # "ModelPatchLoader"
+                f"CN Patch Loader: {cn_name[:20]}",
+                name=cn_name,
+            )
+            self._notify(wm)
+
+            patch_inputs: dict = {
+                "model": [model_src_id, model_src_slot],
+                "model_patch": [patch_loader_nid, 0],
+                "vae": [vae_src_id, vae_src_slot],
+                arch.cn_strength_param: strength,
+            }
+            if preproc_output:
+                patch_inputs["image"] = preproc_output
+
+            patch_nid = wm.add_node(
+                arch.cn_apply_node,  # "ZImageFunControlnet" / "QwenImageDiffsynthControlnet"
+                f"CN: {cn_name[:25]}",
+                **patch_inputs,
+            )
+            self._notify(wm)
+
+            rewired = []
+            for nid, node in wm.workflow.items():
+                if nid in (patch_nid, patch_loader_nid):
+                    continue
+                for inp_name, inp_val in list(node.get("inputs", {}).items()):
+                    if (
+                        inp_name == "model"
+                        and isinstance(inp_val, list)
+                        and len(inp_val) == 2
+                        and str(inp_val[0]) == model_src_id
+                        and int(inp_val[1]) == model_src_slot
+                    ):
+                        wm.workflow[nid]["inputs"][inp_name] = [patch_nid, 0]
+                        rewired.append(f"{nid}.{inp_name}")
+
+            self._notify(wm)
+            parts = [
+                f"✅ ControlNet (model_patch) added ({arch.skill_name}):",
+                f"   Patch Loader: {patch_loader_nid} ({cn_name})",
+            ]
+            if preproc_cls and image_nid:
+                parts.append(f"   Preproc:      {preproc_nid} ({preproc_cls})")
+            parts.append(
+                f"   Patch Node:   {patch_nid} ({arch.cn_apply_node}, "
+                f"strength={strength})"
+            )
+            parts.append(f"   Re-wired model: {rewired}")
+            return "\n".join(parts)
+
+        if arch is not None and arch.cn_style == "conditioning":
+            # Registered arch that still uses conditioning-style apply.
+            cn_loader_nid = wm.add_node(
+                arch.cn_loader_node,
+                f"CN Loader: {cn_name[:20]}",
+                control_net_name=cn_name,
+            )
+            self._notify(wm)
+
+            apply_inputs: dict = {
+                "positive": [pos_nid, 0],
+                "negative": [neg_nid, 0],
+                "control_net": [cn_loader_nid, 0],
+                arch.cn_strength_param: strength,
+                "start_percent": start_pct,
+                "end_percent": end_pct,
+            }
+            if arch.cn_has_union_type:
+                apply_inputs["union_type"] = inputs.get("union_type", "canny")
+            if preproc_output:
+                apply_inputs["image"] = preproc_output
+
+            apply_nid = wm.add_node(arch.cn_apply_node, "CN Apply", **apply_inputs)
+            self._notify(wm)
+
+            for nid, node in wm.workflow.items():
+                if node.get("class_type") == "KSampler":
+                    for inp_name, inp_val in list(node["inputs"].items()):
+                        if isinstance(inp_val, list) and len(inp_val) == 2:
+                            src = str(inp_val[0])
+                            if src == pos_nid and inp_name == "positive":
+                                wm.workflow[nid]["inputs"]["positive"] = [apply_nid, 0]
+                            if src == neg_nid and inp_name == "negative":
+                                wm.workflow[nid]["inputs"]["negative"] = [apply_nid, 1]
+
+            self._notify(wm)
+            union_info = (
+                f", union_type={apply_inputs['union_type']}"
+                if arch.cn_has_union_type else ""
+            )
+            parts = [
+                f"✅ ControlNet branch added ({arch.skill_name}):",
+                f"   Loader:  {cn_loader_nid} ({cn_name})",
+            ]
+            if preproc_cls and image_nid:
+                parts.append(f"   Preproc: {preproc_nid} ({preproc_cls})")
+            parts.append(
+                f"   Apply:   {apply_nid} "
+                f"({arch.cn_strength_param}={strength}{union_info}, "
+                f"{start_pct:.1f}→{end_pct:.1f})"
+            )
+            return "\n".join(parts)
+
+        # Standard SD/SDXL/Flux: ControlNetLoader + ControlNetApplyAdvanced.
+        cn_loader_nid = wm.add_node(
+            "ControlNetLoader", f"CN: {cn_name[:25]}", control_net_name=cn_name
+        )
+        self._notify(wm)
+
+        apply_inputs = {
             "positive": [pos_nid, 0],
             "negative": [neg_nid, 0],
             "control_net": [cn_loader_nid, 0],
@@ -1513,38 +1880,26 @@ class ClawAgent:
                 if active_model:
                     break
 
-        # Detect Qwen-Image pipeline — either via custom pipeline nodes (old plugin)
-        # or via native ComfyUI UNETLoader with a qwen model filename.
-        _qwen_plugin_classes = {"QwenImageModelLoader", "RH_QwenImageGenerator"}
-        _qwen_unet_names = ("qwen_image",)
+        # Detect non-standard architecture via registry.
+        arch_cfg = self._detect_arch(workflow_manager) if workflow_manager else None
 
-        def _node_is_qwen_unet(node: dict) -> bool:
-            if node.get("class_type") != "UNETLoader":
-                return False
-            name = str(node.get("inputs", {}).get("unet_name", "")).lower()
-            return any(kw in name for kw in _qwen_unet_names)
-
-        is_qwen = workflow_manager is not None and any(
-            node.get("class_type") in _qwen_plugin_classes or _node_is_qwen_unet(node)
-            for node in workflow_manager.workflow.values()
-        )
-
-        if is_qwen:
+        if arch_cfg is not None:
             parts.append(
-                "## Active Model\n`Qwen-Image-2512` (custom pipeline — no KSampler/ControlNet/LoRA)"
+                f"## Active Model\n`{active_model or arch_cfg.skill_name}` "
+                f"({arch_cfg.description})"
             )
         elif active_model:
             parts.append(f"## Active Model\n`{active_model}`")
 
-        # Hint at relevant skills (names only — full instructions loaded via read_skill)
+        # Hint at relevant skills (names only — full instructions loaded via read_skill).
         # Also suggest model-specific skills based on the active checkpoint name.
         relevant = self.skill_manager.detect_relevant_skills(original_prompt)
         if workflow_manager and len(workflow_manager.workflow) == 0:
             if "workflow-builder" not in relevant:
                 relevant.insert(0, "workflow-builder")
-        if is_qwen:
-            if "qwen-image-2512" not in relevant:
-                relevant.insert(0, "qwen-image-2512")
+        if arch_cfg is not None:
+            if arch_cfg.skill_name not in relevant:
+                relevant.insert(0, arch_cfg.skill_name)
         elif active_model:
             for skill_name in self.skill_manager.skill_names:
                 # Simple substring match: skill name keywords appear in model filename
@@ -1566,8 +1921,8 @@ class ClawAgent:
         ]
         preloaded_skill_name: str | None = None
 
-        if is_qwen:
-            preloaded_skill_name = "qwen-image-2512"
+        if arch_cfg is not None:
+            preloaded_skill_name = arch_cfg.skill_name
         elif active_model:
             model_lower = active_model.lower()
             for keywords, skill_name in _MODEL_SKILL_MAP:

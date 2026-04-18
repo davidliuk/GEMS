@@ -45,6 +45,8 @@ you must use the correct output slot index. Wrong slot = ComfyUI 400 error.
 | **ControlNetLoader** | CONTROL_NET | — | — |
 | **ControlNetApplyAdvanced** | positive (CONDITIONING) | negative (CONDITIONING) | — |
 | **LatentUpscaleBy** | LATENT | — | — |
+| **LongCatImageModelLoader** | LONGCAT_PIPE | — | — |
+| **LongCatImageTextToImage** | IMAGE | — | — |
 
 **Common wiring mistakes to avoid:**
 - CheckpointLoaderSimple: CLIP is slot **1** (not 0), VAE is slot **2** (not 1)
@@ -63,20 +65,26 @@ query_available_models("diffusion_models")
 
 Then match the filename to an architecture:
 
-| Filename pattern | Architecture | Go to |
-|---|---|---|
-| `*sd15*`, `*sd_1*`, `dreamshaper*`, `realistic*`, `deliberate*` | SD 1.5 | Recipe A |
-| `*sdxl*`, `*sd_xl*`, `juggernaut*`, `zavychroma*` | SDXL | Recipe B |
-| `*flux*` | Flux | Recipe C |
-| `*qwen_image*` | Qwen-Image-2512 | Recipe D |
-| `*hunyuan*` | HunyuanDiT | Recipe E |
-| `*sd3*`, `*sd_3*` | SD 3.x | Recipe F |
+| Filename pattern | Architecture | CLIPLoader type | Go to |
+|---|---|---|---|
+| `*sd15*`, `*sd_1*`, `dreamshaper*`, `realistic*`, `deliberate*` | SD 1.5 | — | Recipe A |
+| `*sdxl*`, `*sd_xl*`, `juggernaut*`, `zavychroma*` | SDXL | — | Recipe B |
+| `*flux*` | Flux | — | Recipe C |
+| `*qwen_image*` | Qwen-Image-2512 | `qwen_image` | Recipe D |
+| `*z_image*` | Z-Image-Turbo | `qwen3_4b` | Recipe G |
+| `*longcat*` | LongCat-Image | — (custom nodes) | Recipe H |
+| `*hunyuan*` | HunyuanDiT | — | Recipe E |
+| `*sd3*`, `*sd_3*` | SD 3.x | — | Recipe F |
 
-If multiple models are available, prefer: Flux > SDXL > Qwen > SD 1.5
+If multiple models are available, prefer: Z-Image-Turbo > Qwen > LongCat-Image > Flux > SDXL > SD 1.5
 (unless the user specifies a model or the pinned image model overrides).
 
+**LongCat-Image note:** This model uses custom pipeline nodes — no UNETLoader, no KSampler.
+Use Recipe H. LoRA and ControlNet are NOT available for this arch; use prompt tuning + parameter
+tuning (guidance_scale, steps) instead.
+
 If checkpoints list is empty, also check `diffusion_models` — DiT-based models
-(Flux, Qwen, HunyuanDiT) use UNETLoader with files in `diffusion_models/`.
+(Flux, Qwen, Z-Image, HunyuanDiT) use UNETLoader with files in `diffusion_models/`.
 
 ---
 
@@ -342,6 +350,130 @@ n9 = add_node("VAEDecode", "VAE Decode",
 n10 = add_node("SaveImage", "Save Image",
                images=[n9, 0],                             # ← IMAGE from VAEDecode
                filename_prefix="ComfyClaw")
+```
+
+---
+
+## Recipe G — Z-Image-Turbo
+
+**Read skill "z-image-turbo" for detailed guidance** — it covers sampler settings,
+LoRA stacking, and ControlNet usage for this model.
+
+Z-Image-Turbo: 6B S3-DiT, BF16, 16 GB VRAM. Separate UNETLoader + CLIPLoader + VAELoader.
+**No ModelSamplingAuraFlow needed. CFG must be 0.0. Steps = 8.**
+
+```python
+# 1. UNET loader
+n1 = add_node("UNETLoader", "Z-Image UNET",
+              unet_name="z_image_turbo_bf16.safetensors",
+              weight_dtype="bfloat16")
+
+# 2. Text encoder (Qwen3-4B)
+n2 = add_node("CLIPLoader", "Z-Image CLIP",
+              clip_name="qwen_3_4b.safetensors",
+              type="qwen3_4b")
+
+# 3. VAE
+n3 = add_node("VAELoader", "VAE",
+              vae_name="ae.safetensors")
+
+# 4. Positive prompt
+n4 = add_node("CLIPTextEncode", "Positive Prompt",
+              clip=[n2, 0], text="<detailed natural-language description>")
+
+# 5. Negative prompt
+n5 = add_node("CLIPTextEncode", "Negative Prompt",
+              clip=[n2, 0], text="low resolution, blurry, distorted, watermark")
+
+# 6. Latent (1024×1024 native)
+n6 = add_node("EmptySD3LatentImage", "Empty Latent",
+              width=1024, height=1024, batch_size=1)
+
+# 7. KSampler — cfg=0.0 is mandatory for Turbo
+n7 = add_node("KSampler", "KSampler",
+              model=[n1, 0],
+              positive=[n4, 0], negative=[n5, 0],
+              latent_image=[n6, 0],
+              seed=42, steps=8, cfg=0.0,
+              sampler_name="euler", scheduler="simple",
+              denoise=1.0)
+
+# 8. VAE Decode
+n8 = add_node("VAEDecode", "VAE Decode",
+              samples=[n7, 0], vae=[n3, 0])
+
+# 9. Save
+n9 = add_node("SaveImage", "Save Image",
+              images=[n8, 0], filename_prefix="ComfyClaw")
+```
+
+### Default parameters
+
+| Parameter | Value | Notes |
+|---|---|---|
+| Resolution | 1024×1024 | Native; 16:9 → 1280×720 |
+| Steps | 8 | Turbo-optimised |
+| CFG | **0.0** | Mandatory — guidance distillation |
+| Sampler | `euler` | |
+| Scheduler | `simple` | |
+
+---
+
+## Recipe H — LongCat-Image
+
+**Read skill "longcat-image" for detailed guidance** — it covers Chinese text rendering,
+parameter tuning, and iteration strategy.
+
+LongCat-Image: 6B model by Meituan, BF16, ~17 GB VRAM. Uses custom pipeline nodes —
+NOT UNETLoader/KSampler. **No LoRA or ControlNet support.** Key strength: Chinese text rendering.
+
+```python
+# 1. Load model — outputs LONGCAT_PIPE on slot 0
+n1 = add_node("LongCatImageModelLoader", "LongCat-Image Loader",
+              model_name="<exact filename from query_available_models>",
+              precision="bfloat16")
+
+# 2. All-in-one generator — takes LONGCAT_PIPE, outputs IMAGE on slot 0
+n2 = add_node("LongCatImageTextToImage", "LongCat Generate",
+              model=[n1, 0],
+              positive_text="<detailed natural-language prompt>",
+              negative_text="low quality, blurry, watermark, text artifacts",
+              steps=28,
+              guidance_scale=4.5,
+              seed=42,
+              width=1344,
+              height=768,
+              enable_cfg_renorm=True,
+              enable_prompt_rewrite=True)
+
+# 3. Save Image — takes IMAGE on slot 0
+n3 = add_node("SaveImage", "Save Image",
+              images=[n2, 0],
+              filename_prefix="ComfyClaw")
+```
+
+### Default parameters
+
+| Parameter | Photorealism | Stylized | Notes |
+|---|---|---|---|
+| `steps` | 24–32 | 14–24 | Start at 28 |
+| `guidance_scale` | 4.5–6.0 | 3.0–4.0 | Start at 4.5 |
+| `enable_cfg_renorm` | `true` | `true` | Always enable |
+| `enable_prompt_rewrite` | `true` | `true` | Always enable |
+
+### Resolution buckets
+
+| Aspect | Width | Height |
+|---|---|---|
+| 16:9 | 1344 | 768 |
+| 9:16 | 768 | 1344 |
+| 1:1 | 1024 | 1024 |
+
+### Chinese text rendering
+
+Wrap any text to be rendered in quotation marks inside the prompt:
+```
+A neon sign reading "欢迎光临" above a Beijing street food stall at night.
 ```
 
 ---

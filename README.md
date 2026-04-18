@@ -64,6 +64,7 @@ hires-fix passes until a configurable quality threshold is reached.
 - [Python API](#python-api)
 - [Architecture](#architecture)
 - [Skills](#skills)
+- [LoRA & ControlNet](docs/LORA_CONTROLNET.md)
 - [Development](#development)
 - [Project structure](#project-structure)
 
@@ -726,6 +727,7 @@ Each skill is a directory with a `SKILL.md` file containing YAML frontmatter.
 | `prompt-artist` | Advanced prompt engineering techniques |
 | `lora-enhancement` | Texture / lighting / anatomy defects |
 | `controlnet-control` | Flat background, blurry edges, wrong pose |
+| `qwen-image-2512` / `z-image-turbo` | Per-model recipes including LoRA & ControlNet wiring (see [docs/LORA_CONTROLNET.md](docs/LORA_CONTROLNET.md)) |
 | `regional-control` | Subject–background style bleed |
 | `hires-fix` | Low resolution, soft detail |
 | `spatial` | Multiple objects with spatial relationships |

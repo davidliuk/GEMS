@@ -28,6 +28,27 @@ query_available_models("controlnets")
 
 If no suitable model is installed, stop here and try a different fix strategy.
 
+> **Qwen-Image-2512 / Z-Image-Turbo note:** call the same `add_controlnet`
+> tool, but the harness automatically switches to the **model-patch** wiring
+> for these archs (`ModelPatchLoader` + `QwenImageDiffsynthControlnet` for
+> Qwen, `ZImageFunControlnet` for Z-Image). Two consequences:
+>
+> 1. `image_node_id` is **mandatory** (the patch node takes an image input) —
+>    wire in a `LoadImage` or a `VAEDecode` before calling.
+> 2. The workflow **must contain a `VAELoader`** — the patch node consumes
+>    VAE.
+> 3. `union_type`, `start_percent`, `end_percent` are ignored — Qwen uses
+>    per-file control modes (canny vs depth) and neither patch node exposes a
+>    schedule. See the per-model skills for the exact filenames.
+>
+> SD/SDXL ControlNet weights are architecturally incompatible with Qwen /
+> Z-Image and vice versa.
+>
+> **LongCat-Image**: ControlNet is not supported at all for this arch
+> (pipeline-style `LongCatImageTextToImage` node exposes no MODEL tensor to
+> patch). The tool call will fail with a clear message; use prompt-level or
+> LoRA-equivalent guidance instead.
+
 ## Step 2 — Choose the right ControlNet type
 
 | Verifier problem | ControlNet type | Preprocessor class | Model keywords |

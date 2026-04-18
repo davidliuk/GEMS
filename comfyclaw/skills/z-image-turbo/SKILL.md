@@ -42,8 +42,8 @@ fits in 16 GB consumer VRAM in BF16.
 | Native resolution | 512/1024 | 1328×1328 | **1024×1024** |
 | UNETLoader weight_dtype | varies | `default` | **`default`** |
 | LoRA node | `LoraLoader` | `LoraLoaderModelOnly` | `LoraLoaderModelOnly` |
-| ControlNet loader | `ControlNetLoader` | `QwenImageFunControlNetLoader` | `ZImageFunControlNetLoader` |
-| ControlNet apply | `ControlNetApplyAdvanced` | `QwenImageFunControlNetApply` | `ZImageFunControlNetApply` |
+| ControlNet loader | `ControlNetLoader` | `ModelPatchLoader` | `ModelPatchLoader` |
+| ControlNet apply | `ControlNetApplyAdvanced` | `QwenImageDiffsynthControlnet` (model-patch) | `ZImageFunControlnet` (model-patch) |
 
 ---
 
@@ -77,15 +77,24 @@ UNETLoader
                       └──► KSampler ...
 ```
 
-### With Fun ControlNet
+### With Fun ControlNet (model-patch style)
+
+Z-Image-Turbo ControlNet patches the MODEL tensor — positive / negative
+conditioning are left untouched.
 
 ```
-UNETLoader ──► [LoRA chain] ──► ModelSamplingAuraFlow ──► KSampler
-CLIPTextEncode (positive) ──► ZImageFunControlNetApply ──► KSampler.positive
-ConditioningZeroOut ──► ZImageFunControlNetApply ──► KSampler.negative
-ZImageFunControlNetLoader ──► ZImageFunControlNetApply
-LoadImage ──► [Preprocessor] ──► ZImageFunControlNetApply.image
+UNETLoader ──► [LoRA chain] ──► ZImageFunControlnet ──► ModelSamplingAuraFlow ──► KSampler
+                                       ▲    ▲    ▲
+                                       │    │    └── LoadImage (control reference)
+                                       │    └────── VAELoader
+                                       └──────────  ModelPatchLoader (Z-Image-Turbo-Fun-Controlnet-Union-*.safetensors)
+
+CLIPTextEncode (positive) ──► KSampler.positive     (unchanged)
+ConditioningZeroOut      ──► KSampler.negative     (unchanged)
 ```
+
+`add_controlnet` **requires an `image_node_id`** (LoadImage / VAEDecode) and
+the workflow must contain a `VAELoader`.
 
 ---
 
@@ -166,6 +175,13 @@ Use `add_lora_loader` without `clip_node_id`; the harness uses `LoraLoaderModelO
 
 **Z-Image-Turbo LoRAs are NOT compatible with Qwen-Image-2512, and vice versa.**
 
+### Public LoRA weights (place in `ComfyUI/models/loras/`)
+
+| File | Size | Focus |
+|---|---|---|
+| `Z-Image-Turbo-Radiant-Realism-Pro.safetensors` | ~163 MB | Realism + lighting polish |
+| `Z-Image-Turbo-Realism-LoRA.safetensors` | ~82 MB | Lighter realism tweak |
+
 ### Adding a LoRA
 
 ```
@@ -204,46 +220,50 @@ Limit to 2–3 LoRAs; keep total strength sum ≤ 1.8 to avoid artifacts.
 
 ### Architecture note
 
-Z-Image-Turbo uses the **Fun ControlNet Union** format (same concept as Qwen-Image-2512
-but with its own trained weights). Custom ComfyUI nodes are required:
+Z-Image-Turbo uses the **Fun ControlNet Union** format — wired as a
+**model-patch** (not conditioning-patch). Nodes used (both built-in):
 
-- Loader: `ZImageFunControlNetLoader`
-- Apply: `ZImageFunControlNetApply`
+- Loader: `ModelPatchLoader` (generic — loads from `ComfyUI/models/model_patches/`)
+- Apply:  `ZImageFunControlnet`
+  - Inputs: `model`, `model_patch`, `vae`, `image`, `strength`
+  - Output: a patched `MODEL` that replaces the original MODEL at every
+    downstream consumer (KSampler, ModelSamplingAuraFlow).
 
-The harness automatically uses these when Z-Image-Turbo is detected.
+The harness auto-detects Z-Image and uses these when you call `add_controlnet`.
+There is **no `union_type` input** on `ZImageFunControlnet` — the Union file
+ships all modes together and the preprocessor (or a pre-baked control image)
+selects which signal is used.
 
 **Z-Image ControlNet weights are NOT compatible with Qwen-Image-2512, and vice versa.**
 
-### Available model
+### Available model file (place in `ComfyUI/models/model_patches/`)
 
-| Model file | Size | Source |
+| File | Size | Source |
 |---|---|---|
-| `Z-Image-Turbo-Fun-Controlnet-Union.safetensors` | ~3.5 GB | `alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union` |
+| `Z-Image-Turbo-Fun-Controlnet-Union-2.1.safetensors` | ~6.3 GB | `alibaba-pai/Z-Image-Turbo-Fun-Controlnet-Union` |
 
-Place in `ComfyUI/models/controlnets/`.
+### Control modes (chosen by the preprocessor, not by `union_type`)
 
-### Control modes (union_type)
-
-| union_type | Preprocessor | Use case |
-|---|---|---|
-| `canny` | `CannyEdgePreprocessor` | Edge/structure preservation |
-| `hed` | `HEDPreprocessor` | Soft structural guidance |
-| `depth` | `MiDaS-DepthMapPreprocessor` | 3D layout, depth separation |
-| `pose` | `DWPreprocessor` | Lock human skeleton |
-| `mlsd` | `MLSDPreprocessor` | Architecture, straight lines |
-| `scribble` | none (raw sketch) | Loose compositional sketch |
-| `gray` | none (grayscale) | Luminosity/tone control |
+| Preprocessor | Use case |
+|---|---|
+| `CannyEdgePreprocessor` | Edge / structure preservation |
+| `HEDPreprocessor` | Soft structural guidance |
+| `MiDaS-DepthMapPreprocessor` / `DepthAnythingV2Preprocessor` | 3D layout, depth separation |
+| `DWPreprocessor` | Lock human skeleton |
+| `MLSDPreprocessor` | Architecture, straight lines |
+| `""` (none) | Pass a pre-computed map (sketch, grayscale, canny PNG) directly |
 
 ### Parameters
 
 | param | input name | range | default |
 |---|---|---|---|
-| Strength | `control_context_scale` | 0.0–1.0 | 0.80 |
-| Start step | `start_percent` | 0.0–1.0 | 0.0 |
-| End step | `end_percent` | 0.0–1.0 | 1.0 |
-| Mode | `union_type` | see table | `canny` |
+| Strength | `strength` | 0.0–1.0 | 0.80 |
 
-Recommended strength: 0.65–0.80.
+`union_type`, `start_percent`, `end_percent` are accepted by `add_controlnet`
+for API symmetry but are **not forwarded** to `ZImageFunControlnet` — it has
+no schedule or mode switch.
+
+Recommended strength: 0.65–0.85.
 
 ---
 
@@ -256,7 +276,8 @@ Recommended strength: 0.65–0.80.
 | Wrong composition | Add spatial language; ControlNet depth or canny |
 | Wrong pose | ControlNet pose at strength 0.90, end_percent=1.0 |
 | Soft / blurry | More descriptive prompt; increase steps to 12 |
-| ControlNet too rigid | Lower `control_context_scale` to 0.55–0.65 |
+| ControlNet too rigid | Lower `strength` to 0.50–0.65 |
+| ControlNet node error "needs a VAELoader" | Add a `VAELoader` in the workflow and connect it upstream of VAEDecode |
 | LoRA artifacts | Reduce `strength_model` to 0.6; check BF16 compat. |
 | Over-engineered prompt | Simplify prompt — shorter is better for this model |
 | Complete generation failure | Check cfg=1, sampler=res_multistep, ModelSamplingAuraFlow present |
@@ -277,6 +298,30 @@ set_param("<pos node>", "text",
 
 set_param("<EmptySD3LatentImage>", "width",  1280)
 set_param("<EmptySD3LatentImage>", "height",  720)
+
+# DO NOT change cfg or sampler — leave at cfg=1, res_multistep
+finalize_workflow()
+```
+
+## 10. Example: LoRA + ControlNet (depth)
+
+```
+# Add style LoRA (model-patch chain)
+add_lora_loader(
+    lora_name      = "Z-Image-Turbo-Radiant-Realism-Pro.safetensors",
+    model_node_id  = "<UNETLoader ID>",
+    strength_model = 0.9,
+)
+
+# Add depth ControlNet (also on the MODEL branch — harness finds current MODEL source)
+add_controlnet(
+    controlnet_name    = "Z-Image-Turbo-Fun-Controlnet-Union-2.1.safetensors",
+    preprocessor_class = "MiDaS-DepthMapPreprocessor",
+    image_node_id      = "<reference photo node>",    # REQUIRED
+    positive_node_id   = "<pos node>",
+    negative_node_id   = "<neg node>",
+    strength           = 0.75,
+)
 
 # DO NOT change cfg or sampler — leave at cfg=1, res_multistep
 finalize_workflow()

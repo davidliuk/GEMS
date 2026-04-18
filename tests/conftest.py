@@ -9,6 +9,18 @@ import pytest
 from comfyclaw.workflow import WorkflowManager
 
 # ---------------------------------------------------------------------------
+# Ignore live-server E2E scripts in the default pytest run.
+# Both `tests/e2e_lora_controlnet.py` and `tests/e2e_lora_controlnet_real.py`
+# require a running ComfyUI server (and, for the `_real` one, the weights
+# listed in docs/LORA_CONTROLNET.md). Run them manually:
+#     python tests/e2e_lora_controlnet.py
+#     python tests/e2e_lora_controlnet_real.py
+# ---------------------------------------------------------------------------
+collect_ignore_glob = [
+    "e2e_*.py",
+]
+
+# ---------------------------------------------------------------------------
 # Workflow fixtures
 # ---------------------------------------------------------------------------
 

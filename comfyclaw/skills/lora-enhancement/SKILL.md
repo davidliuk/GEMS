@@ -43,18 +43,30 @@ LoRAs in one iteration rarely helps and often introduces new artifacts.
 
 ## Step 3 — Add with `add_lora_loader`
 
+**For SD / SDXL / Flux pipelines** (CheckpointLoaderSimple or UNETLoader without Qwen):
+
 ```
 add_lora_loader(
   lora_name       = "<exact filename from query>",
   model_node_id   = "<UNETLoader or CheckpointLoaderSimple node ID>",
   clip_node_id    = "<CLIPLoader or CheckpointLoaderSimple node ID>",
-  strength_model  = 0.75,   # starting point — see guidelines below
+  strength_model  = 0.75,
   strength_clip   = 0.75,
 )
 ```
 
-LoRA loaders chain: the `MODEL` and `CLIP` outputs of one loader become the
-inputs of the next. Wire them in series between the checkpoint and the sampler.
+**For Qwen-Image-2512 (MMDiT) pipelines** — omit `clip_node_id`; the backend
+automatically uses `LoraLoaderModelOnly` (model-only, no CLIP tower):
+
+```
+add_lora_loader(
+  lora_name      = "<exact filename from query>",
+  model_node_id  = "<UNETLoader or existing LoraLoaderModelOnly node ID>",
+  strength_model = 0.75,
+)
+```
+
+LoRA loaders chain in series between the model loader and the sampler.
 
 ## Strength guidelines
 

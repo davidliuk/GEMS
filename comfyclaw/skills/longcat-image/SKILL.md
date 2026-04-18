@@ -42,6 +42,10 @@ It requires ~17 GB VRAM (BF16) or CPU offload.
 | LoRA | yes | yes | yes | **not supported** |
 | ControlNet | yes | yes | yes | **not supported** |
 
+> **Note on LoRA / ControlNet tools:** Calling `add_lora_loader` or `add_controlnet`
+> while LongCat-Image is the active model returns an informative error and does NOT
+> modify the workflow. Use `set_param` and prompt engineering instead — see §6/§7.
+
 ---
 
 ## 1. Node graph structure
