@@ -44,6 +44,8 @@ any combination of model and benchmark through CLI flags.
 ```bash
 source .venv/bin/activate
 
+COMFYUI_DIR=/path/to/ComfyUI
+
 ### Launch comfyUI
 bash ./experiments/launch_comfyui.sh 3
 
