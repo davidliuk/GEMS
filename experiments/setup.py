@@ -131,11 +131,20 @@ def _download_civitai(version_id: str, dest_path: Path) -> None:
     """Download a model file from Civitai by model-version ID."""
     import urllib.request
 
-    url = f"https://civitai.com/api/download/models/{version_id}?type=Model&format=SafeTensor"
     token = os.environ.get("CIVITAI_API_TOKEN", "")
+    if not token:
+        raise EnvironmentError(
+            "CIVITAI_API_TOKEN env var is not set. "
+            "Get an API key from https://civitai.com/user/account and run: "
+            "export CIVITAI_API_TOKEN='your-key-here'"
+        )
+
+    url = (
+        f"https://civitai.com/api/download/models/{version_id}"
+        f"?type=Model&format=SafeTensor&token={token}"
+    )
     req = urllib.request.Request(url)
-    if token:
-        req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Authorization", f"Bearer {token}")
 
     with urllib.request.urlopen(req) as resp, open(dest_path, "wb") as f:
         shutil.copyfileobj(resp, f)
@@ -228,8 +237,8 @@ def download_model_files(
         except Exception as exc:
             if dest_path.exists():
                 dest_path.unlink()
-            log.error("  FAILED %s: %s", filename, exc)
-            raise
+            log.error("  FAILED LoRA %s: %s", filename, exc)
+            log.info("  Continuing with remaining downloads...")
 
 
 def download_benchmark(

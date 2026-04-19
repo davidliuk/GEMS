@@ -355,54 +355,59 @@ n10 = add_node("SaveImage", "Save Image",
 ## Recipe G — Z-Image-Turbo
 
 **Read skill "z-image-turbo" for detailed guidance** — it covers sampler settings,
-LoRA stacking for this model.
+LoRA stacking, and the unique negative conditioning approach for this model.
 
 Z-Image-Turbo: 6B S3-DiT, BF16, 16 GB VRAM. Separate UNETLoader + CLIPLoader + VAELoader.
-**No ModelSamplingAuraFlow needed. CFG must be 0.0. Steps = 8.**
+**ModelSamplingAuraFlow (shift=3) IS required. CFG = 1. Sampler = res_multistep. Steps = 8.**
+**Negative conditioning uses ConditioningZeroOut (NOT CLIPTextEncode).**
 
 ```python
 # 1. UNET loader
 n1 = add_node("UNETLoader", "Z-Image UNET",
               unet_name="z_image_turbo_bf16.safetensors",
-              weight_dtype="bfloat16")
+              weight_dtype="default")
 
-# 2. Text encoder (Qwen3-4B)
+# 2. Text encoder (Qwen3-4B via lumina2 type)
 n2 = add_node("CLIPLoader", "Z-Image CLIP",
               clip_name="qwen_3_4b.safetensors",
-              type="qwen3_4b")
+              type="lumina2")
 
 # 3. VAE
 n3 = add_node("VAELoader", "VAE",
               vae_name="ae.safetensors")
 
-# 4. Positive prompt
-n4 = add_node("CLIPTextEncode", "Positive Prompt",
+# 4. ModelSamplingAuraFlow — required between UNETLoader and KSampler
+n4 = add_node("ModelSamplingAuraFlow", "AuraFlow Sampling",
+              model=[n1, 0], shift=3)
+
+# 5. Positive prompt
+n5 = add_node("CLIPTextEncode", "Positive Prompt",
               clip=[n2, 0], text="<detailed natural-language description>")
 
-# 5. Negative prompt
-n5 = add_node("CLIPTextEncode", "Negative Prompt",
-              clip=[n2, 0], text="low resolution, blurry, distorted, watermark")
+# 6. Negative conditioning — ConditioningZeroOut on POSITIVE output (NOT a text prompt)
+n6 = add_node("ConditioningZeroOut", "Negative (Zeroed)",
+              conditioning=[n5, 0])
 
-# 6. Latent (1024×1024 native)
-n6 = add_node("EmptySD3LatentImage", "Empty Latent",
+# 7. Latent (1024×1024 native)
+n7 = add_node("EmptySD3LatentImage", "Empty Latent",
               width=1024, height=1024, batch_size=1)
 
-# 7. KSampler — cfg=0.0 is mandatory for Turbo
-n7 = add_node("KSampler", "KSampler",
-              model=[n1, 0],
-              positive=[n4, 0], negative=[n5, 0],
-              latent_image=[n6, 0],
-              seed=42, steps=8, cfg=0.0,
-              sampler_name="euler", scheduler="simple",
+# 8. KSampler — cfg=1, sampler=res_multistep are mandatory
+n8 = add_node("KSampler", "KSampler",
+              model=[n4, 0],
+              positive=[n5, 0], negative=[n6, 0],
+              latent_image=[n7, 0],
+              seed=42, steps=8, cfg=1,
+              sampler_name="res_multistep", scheduler="simple",
               denoise=1.0)
 
-# 8. VAE Decode
-n8 = add_node("VAEDecode", "VAE Decode",
-              samples=[n7, 0], vae=[n3, 0])
+# 9. VAE Decode
+n9 = add_node("VAEDecode", "VAE Decode",
+              samples=[n8, 0], vae=[n3, 0])
 
-# 9. Save
-n9 = add_node("SaveImage", "Save Image",
-              images=[n8, 0], filename_prefix="ComfyClaw")
+# 10. Save
+n10 = add_node("SaveImage", "Save Image",
+               images=[n9, 0], filename_prefix="ComfyClaw")
 ```
 
 ### Default parameters
@@ -411,8 +416,8 @@ n9 = add_node("SaveImage", "Save Image",
 |---|---|---|
 | Resolution | 1024×1024 | Native; 16:9 → 1280×720 |
 | Steps | 8 | Turbo-optimised |
-| CFG | **0.0** | Mandatory — guidance distillation |
-| Sampler | `euler` | |
+| CFG | **1** | Do NOT set to 0 |
+| Sampler | **`res_multistep`** | NOT euler — changing this causes failure |
 | Scheduler | `simple` | |
 
 ---

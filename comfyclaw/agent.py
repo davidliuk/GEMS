@@ -1223,6 +1223,12 @@ class ClawAgent:
             )
 
         # Standard SD/SDXL/Flux: LoraLoader (MODEL + CLIP).
+        if "clip_node_id" not in inputs or not inputs["clip_node_id"]:
+            return (
+                "❌ clip_node_id is required for SD/SDXL/Flux LoRA (LoraLoader needs MODEL + CLIP). "
+                "Pass the CheckpointLoaderSimple or CLIPLoader node ID as clip_node_id. "
+                "For Qwen/Z-Image pipelines, clip_node_id can be omitted."
+            )
         clip_nid = str(inputs["clip_node_id"])
         sc = float(inputs.get("strength_clip", 0.8))
 

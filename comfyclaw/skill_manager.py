@@ -326,8 +326,11 @@ class SkillManager:
             for skill_dir in _iter_skill_dirs(root):
                 try:
                     props, body = _parse_skill_md(skill_dir)
-                    if is_evolved and not props.tags:
-                        props = props._replace(tags=["agent"])
+                    if is_evolved:
+                        existing_tags = list(props.tags or [])
+                        if "agent" not in existing_tags:
+                            existing_tags.append("agent")
+                        props = props._replace(tags=existing_tags)
                     if is_evolved and props.name in self._props and props.name not in self._evolved_names:
                         warnings.warn(
                             f"[SkillManager] evolved skill {props.name!r} "
