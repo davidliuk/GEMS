@@ -155,35 +155,13 @@ previous iterations have already validated.  Under-reading evolved skills is
 one of the most common ways agents waste iterations re-discovering fixes we
 already know.
 
-Decision heuristics
--------------------
-  Workflow is EMPTY (no nodes)          → read_skill("workflow-builder") FIRST.
-                                         Then query_available_models to pick arch.
-  Workflow contains QwenImageModelLoader → read_skill("qwen-image-2512") FIRST.
-                                         Qwen: LoRA = LoraLoaderModelOnly.
-  Active model contains "longcat"      → read_skill("longcat-image") FIRST.
-                                         LongCat uses CFGNorm + FluxGuidance, not
-                                         ModelSamplingAuraFlow. LoRA NOT supported
-                                         via standard tools.
-  Active model contains "z_image"      → read_skill("z-image-turbo") FIRST.
-                                         Z-Image uses cfg=1, sampler=res_multistep,
-                                         ConditioningZeroOut for negative. NEVER change cfg/sampler.
-                                         LoRA: LoraLoaderModelOnly.
-  Active model name contains "lcm"     → read_skill("dreamshaper8-lcm") FIRST, before
-                                         any sampler tuning — LCM needs different
-                                         steps/cfg/sampler than standard SD models.
-  Plasticky skin / poor texture        → read_skill("lora-enhancement"), detail LoRA
-  Wrong anatomy (hands, fingers)       → read_skill("lora-enhancement"), anatomy LoRA
-  Style inconsistency                  → read_skill("lora-enhancement"), style LoRA
-  Subject and background bleed         → read_skill("regional-control")
-  Low resolution / soft fine detail    → read_skill("hires-fix")
-  Localised artifact in one area       → add_inpaint_pass
-  User asks for photorealistic image   → read_skill("photorealistic")
-  User asks for high quality / sharp   → read_skill("high-quality")
-  User asks for creative / artistic    → read_skill("creative")
-  Prompt is flat / needs artistic depth→ read_skill("prompt-artist")
-  Multiple objects with spatial layout → read_skill("spatial")
-  Text / sign / label in the image     → read_skill("text-rendering")
+Decision heuristics (consult ``planner-playbook`` for the full table)
+---------------------------------------------------------------------
+For the authoritative mapping from {workflow state, active model, verifier
+symptom, user intent} → {which skill to read first, which architecture
+gotchas to respect}, call ``read_skill("planner-playbook")``.  Do this
+whenever you are unsure which built-in skill to consult next — the table
+is much cheaper than guessing wrong and burning an iteration.
 
 Structural upgrade priority (iteration 2+)
 ------------------------------------------
@@ -207,39 +185,30 @@ color palette, artistic direction.  Prioritize these over structural/technical
 changes.  Items prefixed with [HUMAN] are direct human requests — address
 each one specifically.  Do not second-guess or override human preferences.
 
-Node parameter constraints (DO NOT violate)
--------------------------------------------
-  UNETLoader weight_dtype:  "default" | "fp8_e4m3fn" | "fp8_e4m3fn_fast" | "fp8_e5m2"
-                            Never use "fp16" or "fp32" — causes HTTP 400.
-  Apple MPS cannot run FP8 models. If you see a Float8_e4m3fn MPS error,
-  set weight_dtype to "default" and do not attempt further dtype changes.
-  LoRA class is "LoraLoader" for SD/SDXL/Flux, "LoraLoaderModelOnly" for MMDiT/S3-DiT
-  (Qwen-Image-2512, Z-Image-Turbo). The add_lora_loader tool selects the correct node
-  automatically based on the detected architecture.
-  LongCat-Image does NOT support LoRA via standard tools — use set_param
-  to tune steps/guidance_scale; read_skill("longcat-image") for enhancement options.
+Node parameter constraints (DO NOT violate — cause HTTP 400)
+------------------------------------------------------------
+  UNETLoader weight_dtype: "default" | "fp8_e4m3fn" | "fp8_e4m3fn_fast" | "fp8_e5m2"
+                           Never "fp16" / "fp32".  Apple MPS cannot run FP8 —
+                           fall back to "default" on Float8_e4m3fn MPS errors.
+  LoRA class: "LoraLoader" for SD/SDXL/Flux, "LoraLoaderModelOnly" for MMDiT/S3-DiT
+              (Qwen-Image-2512, Z-Image-Turbo).  The add_lora_loader tool picks
+              the correct class automatically.
+  LongCat-Image: LoRA NOT supported via standard tools — use set_param to tune
+                 steps/guidance_scale; read_skill("longcat-image") for options.
 
-Available workflow tools (use ONLY these — no others exist)
------------------------------------------------------------
-  inspect_workflow          — view all nodes, IDs, and inputs
-  query_available_models    — list checkpoints, LoRAs, etc.
-  set_param                 — set a scalar input: set_param(node_id, param_name, value)
-  set_prompt                — set positive/negative prompt text (no node ID needed)
-  add_node                  — add a new node: add_node(class_type, nickname, inputs={...})
-  connect_nodes             — wire output to input: connect_nodes(src_node_id, src_output_index, dst_node_id, dst_input_name)
-  delete_node               — remove a node by ID
-  add_lora_loader           — insert LoRA between model/clip source and consumers
-  add_regional_attention    — split conditioning into foreground/background
-  add_hires_fix             — add upscale + second KSampler pass
-  add_inpaint_pass          — add targeted inpaint for a region
-  report_evolution_strategy — declare your plan before making changes
-  validate_workflow         — check graph for errors before finalizing
-  finalize_workflow         — signal all modifications are complete
-  read_skill                — load a skill's full instructions on demand
-  explore_nodes             — discover ComfyUI node classes
-  transition_stage          — advance pipeline stage
+Parallel tool calls (save round-trips)
+--------------------------------------
+When your next step needs multiple INDEPENDENT tool calls — e.g. a combined
+``inspect_workflow`` + ``query_available_models("checkpoints")`` + ``query_available_models("loras")``
+survey, or a set of ``set_param`` tweaks on different nodes — emit them in a
+SINGLE assistant turn (the API supports multiple ``tool_calls`` per message).
+The harness dispatches each one and feeds all results back before your next
+planning turn.  Do NOT batch calls that depend on each other's output (e.g.
+``add_node`` followed by ``connect_nodes`` referencing the new node id — the
+new id isn't known until ``add_node`` returns).
 
-Do NOT invent tool names. If a tool call fails, re-read this list and retry
+The full tool list with input schemas is provided alongside this prompt — do
+not invent tool names.  If a tool call fails, re-read the schema and retry
 with the correct name and parameters.
 """
 
@@ -821,8 +790,13 @@ class ClawAgent:
         self.last_messages: list[dict] | None = None
         self.last_token_usage: dict | None = None
 
-        # Skill tracking: which skills were read during the current prompt
+        # Skill tracking: which skills were read during the current prompt.
         self.skills_read: list[str] = []
+        # P2/B6: which skills have been loaded in THIS plan_and_patch call.
+        # Duplicate read_skill calls within the same turn sequence return a
+        # short stub instead of re-sending the full (multi-kB) body, saving
+        # input tokens without changing cross-iteration behaviour.
+        self._loaded_skill_bodies: set[str] = set()
 
     def reset_skills_read(self) -> None:
         """Clear the skills_read list (call between prompts)."""
@@ -848,6 +822,12 @@ class ClawAgent:
 
         Returns the rationale string from the ``finalize_workflow`` call.
         """
+        # P2/B6: fresh per-call dedup set so re-reads within the same tool
+        # loop short-circuit, but iteration 2 can still load a skill that
+        # iteration 1 read (the messages array is rebuilt from scratch each
+        # plan_and_patch, so cross-iteration re-reads are legitimate).
+        self._loaded_skill_bodies = set()
+
         user_content = self._build_user_message(
             original_prompt=original_prompt,
             workflow_manager=workflow_manager,
@@ -1196,6 +1176,13 @@ class ClawAgent:
         ``read_skill`` from within a tool-use loop after deciding which skill
         to apply.  The body text is returned as the tool result so the agent
         can follow the instructions immediately.
+
+        P2/B6: within a single ``plan_and_patch`` call the body is returned
+        only on the first request — subsequent requests for the same skill
+        return a short stub pointing back at the earlier tool result, so the
+        agent doesn't pay input tokens to re-read the same multi-kB body.
+        Cross-iteration reads are unaffected (the dedup set is reset per
+        ``plan_and_patch``).
         """
         try:
             body = self.skill_manager.get_body(skill_name)
@@ -1203,6 +1190,14 @@ class ClawAgent:
             available = ", ".join(self.skill_manager.skill_names)
             return f"❌ Skill {skill_name!r} not found. Available skills: {available or '(none)'}"
         self.skills_read.append(skill_name)
+        if skill_name in self._loaded_skill_bodies:
+            print(f"[ClawAgent] 📖 read_skill (dedup): {skill_name}")
+            return (
+                f"ℹ️ Skill {skill_name!r} was already loaded earlier in this "
+                f"planning turn — scroll up to the previous tool result for "
+                f"the full instructions.  (Skipping re-send to save tokens.)"
+            )
+        self._loaded_skill_bodies.add(skill_name)
         print(f"[ClawAgent] 📖 read_skill: {skill_name}")
         return f"## Instructions for skill: {skill_name}\n\n{body}"
 

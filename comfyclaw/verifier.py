@@ -255,11 +255,19 @@ class ClawVerifier:
         multi_scale: bool = False,
         weighted_requirements: bool = False,
         batch_mode: bool = True,
+        decompose_model: str | None = None,
     ) -> None:
         if api_key:
             from .agent import _set_llm_api_key
             _set_llm_api_key(api_key, model)
         self.model = model
+        # P2/item 4: the prompt-decomposition step is a pure-text call that
+        # turns a user prompt into a list of yes/no verifier questions.  It
+        # doesn't need the flagship VLM model; a cheaper text-only model
+        # (Haiku, GPT-4o-mini, …) is a drop-in replacement that saves ~3s
+        # of first-verify latency and ~95% of input tokens for the decompose
+        # step.  None means "use self.model", preserving legacy behaviour.
+        self.decompose_model: str = decompose_model or model
         self.score_weights = score_weights
         self.max_workers = max_workers
         self.multi_scale = multi_scale
@@ -475,7 +483,11 @@ class ClawVerifier:
             return cached
 
         resp = litellm.completion(
-            model=self.model,
+            # P2/item 4: routed through ``decompose_model`` (defaults to the
+            # main verifier model) so benchmarks can swap in a cheap text
+            # model for this pure-text step without downgrading the vision
+            # calls.
+            model=getattr(self, "decompose_model", self.model),
             max_tokens=1024,
             messages=[{"role": "user", "content": _DECOMPOSE_PROMPT.format(prompt=prompt)}],
         )

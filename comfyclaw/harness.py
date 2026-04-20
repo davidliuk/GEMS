@@ -285,6 +285,13 @@ class HarnessConfig:
     # detailed-analysis call into ONE unified call (2 + N → 1 + 1 LLM calls,
     # image uploaded once).  Set False to keep the legacy parallel path.
     verifier_batch_mode: bool = True
+    # P2/item 4: model used for the pure-text prompt-decomposition step
+    # inside ClawVerifier.  It never sees an image, so a cheap text model
+    # (e.g. ``openai/gpt-4o-mini`` or ``anthropic/claude-haiku-*``) is a
+    # drop-in replacement that cuts ~3s off first-verify and ~95% of
+    # decompose input tokens.  ``None`` falls back to ``verifier_model`` or
+    # ``model`` so legacy configs keep working unchanged.
+    decompose_model: str | None = None
     stage_gated: bool = False
     max_nodes: int = 20
     complexity_penalty: float = 0.02
@@ -465,6 +472,7 @@ class ClawHarness:
             model=config.verifier_model or config.model,
             score_weights=config.score_weights,
             batch_mode=config.verifier_batch_mode,
+            decompose_model=config.decompose_model,
         )
 
         mode = config.verifier_mode
