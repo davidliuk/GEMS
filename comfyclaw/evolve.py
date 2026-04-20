@@ -153,6 +153,67 @@ Rules:
 - Return valid JSON only — no trailing commas, no comments.
 """
 
+# ---------------------------------------------------------------------------
+# Description-writing guide — shared across *every* code path that synthesises
+# a SKILL.md ``description``.  Keep it here so there's one source of truth and
+# all writers (SkillEvolver mutations + run_benchmark's learned-errors /
+# learned-successes synthesizers) benefit from the same triggering advice.
+#
+# Why this matters: the ``description`` field is the ONLY part of a skill the
+# agent sees in its system prompt at plan time.  Vague "this skill is about X"
+# descriptions cause chronic under-triggering — agents know the skill exists
+# but never call ``read_skill`` on it.  The triggering playbook below is
+# lifted (and adapted for the image-gen domain) from Anthropic's official
+# ``skill-creator`` skill's "Description Optimization" section.
+# ---------------------------------------------------------------------------
+
+DESCRIPTION_WRITING_GUIDE = """\
+Description-writing guide (THIS IS THE MOST IMPORTANT FIELD):
+The ``description`` is the ONLY thing the agent sees about this skill in its
+system prompt.  The full body is NOT loaded until the agent calls
+``read_skill``.  Today's LLMs routinely under-trigger skills — if your
+description only states what the skill IS, the agent will skip it.  You MUST
+make the description do TWO things in a single line:
+
+  1. Say briefly WHAT the skill contains (a capability summary).
+  2. Say PUSHILY WHEN to consult it — give concrete trigger signals the agent
+     will actually encounter at plan time (prompt keywords, error strings,
+     verifier feedback phrases, workflow states, number of objects, etc.).
+
+Use imperative phrasing: "Consult when…", "Read this before…",
+"Apply whenever…", "Use this for any prompt containing…".  It is OK —
+encouraged, even — to be a little pushy: include synonyms and closely
+related phrasings so the agent notices even when the user phrasing varies.
+
+GOOD (note the explicit WHEN clauses):
+  "Counting-and-composition playbook for >=4 distinct objects. Consult
+   whenever the prompt contains a number word ('three', 'four', 'six',
+   'seven', 'eight') AND two or more object types ('and', 'with'), OR when
+   the verifier flags missing/extra objects; includes proven node orderings
+   and region-split strategies that hit 0.956+ on geneval2."
+
+  "ComfyUI validation-error recovery kit. Read this BEFORE editing any
+   workflow when the previous attempt raised 'exception_during_inner_validation',
+   'prompt_outputs_failed_validation', 'conditioning_to_strength > 1.0', or
+   broken 'positive'/'CONDITIONING' edges; includes the exact node-level fixes
+   that unblocked those errors in past runs."
+
+BAD (vague, states WHAT but not WHEN — agent will skip these):
+  "Proven strategies for high-scoring workflows."
+  "ComfyUI error prevention guide."
+  "Helper skill for the agent."
+
+Additional rules:
+- Single line, no embedded newlines.
+- Start with the capability, then pivot to the trigger clause ("Consult …",
+  "Read … when …").
+- Name at least 2–3 concrete trigger signals (words, phrases, error strings,
+  workflow states).  The more specific, the better.
+- Length target: 30–80 words.  Longer than the old one-liners, but still
+  one line of text.
+"""
+
+
 _PROPOSE_MUTATION_PROMPT = """\
 You are a skill evolution engine. Given this cluster and the current
 skill set, propose a skill mutation.
@@ -179,12 +240,13 @@ Return ONLY a JSON object (no markdown fences, no explanation before/after):
   "rationale": "Why this mutation addresses the cluster",
   "proposed_changes": {{
     "name": "skill-name",
-    "description": "One-line skill description (no newlines)",
+    "description": "<what it does>. <pushy 'when to consult' signals> (see guide below)",
     "body": "Full SKILL.md body with instructions",
     "tags": ["optional", "extra", "tags"]
   }}
 }}
 
+""" + DESCRIPTION_WRITING_GUIDE + """
 Tag guidance:
 - ``proposed_changes.tags`` is OPTIONAL.  The runner will automatically attach
   ``agent``, ``model:<short>``, and ``bench:<short>`` tags based on the current

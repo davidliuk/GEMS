@@ -141,6 +141,20 @@ built-in ones — they add specialized techniques, not replace them.  If an evol
 skill mentions a built-in skill (e.g. "Complements: regional-control"), read and
 apply the built-in skill FIRST, then layer the evolved skill's extra techniques.
 
+Proactively consulting evolved skills
+--------------------------------------
+Evolved skills (names often prefixed ``learned-``, or tagged with the current
+``model:`` / ``bench:`` pair) are CONDENSED LESSONS FROM PAST RUNS on this exact
+model+benchmark combination.  Before you plan each iteration, scan
+<available_skills> for any evolved skill whose description mentions a trigger
+that matches your current situation — specific prompt keywords (e.g. a number
+word, a material, "and"-conjunctions), error strings from the last attempt, or
+verifier feedback phrases.  If any description's trigger clause matches:
+``read_skill`` it FIRST — the body contains proven node-level fixes that
+previous iterations have already validated.  Under-reading evolved skills is
+one of the most common ways agents waste iterations re-discovering fixes we
+already know.
+
 Decision heuristics
 -------------------
   Workflow is EMPTY (no nodes)          → read_skill("workflow-builder") FIRST.

@@ -239,13 +239,18 @@ def synthesize_learned_skill(new_errors: list[dict], learned_dir: str) -> bool:
             "Create a NEW skill from these errors.\n\n"
         )
 
+    from comfyclaw.evolve import DESCRIPTION_WRITING_GUIDE
+
     prompt_text += (
         "Output ONLY the complete SKILL.md content. It MUST follow this exact format:\n"
         "1. Start with YAML frontmatter between --- delimiters\n"
         "2. The 'name' field MUST be exactly 'learned-errors'\n"
-        "3. The 'description' field should explain when the agent should read this skill\n"
+        "3. The 'description' field is CRITICAL — follow the guide below.\n"
         "4. Include 'tags: [agent]' in the frontmatter (required for agent discovery)\n"
         "5. After the frontmatter, write clear Markdown instructions\n\n"
+        f"{DESCRIPTION_WRITING_GUIDE}\n"
+        "Cite at least one of the concrete error strings above in the WHEN clause\n"
+        "so the agent trivially recognises when to consult this skill.\n\n"
         "Focus on:\n"
         "- ComfyUI node output slot indices (which slot is MODEL vs CLIP vs VAE)\n"
         "- Common wiring mistakes and how to avoid them\n"
@@ -434,13 +439,19 @@ def synthesize_success_patterns(
             "Create a NEW skill from these successful patterns.\n\n"
         )
 
+    from comfyclaw.evolve import DESCRIPTION_WRITING_GUIDE
+
     prompt_text += (
         "Output ONLY the complete SKILL.md content. It MUST follow this exact format:\n"
         "1. Start with YAML frontmatter between --- delimiters\n"
         "2. The 'name' field MUST be exactly 'learned-successes'\n"
-        "3. The 'description' field should explain what proven strategies this skill teaches\n"
+        "3. The 'description' field is CRITICAL — follow the guide below.\n"
         "4. Include 'tags: [agent]' in the frontmatter (required for agent discovery)\n"
         "5. After the frontmatter, write clear Markdown instructions\n\n"
+        f"{DESCRIPTION_WRITING_GUIDE}\n"
+        "Cite at least 2 concrete trigger signals from the successful prompts above\n"
+        "(number words, object-type combinations, prompt phrasings, etc.) so the\n"
+        "agent recognises a matching prompt at plan time and calls read_skill.\n\n"
         "Focus on:\n"
         "- Which tools and node configurations produced the best results\n"
         "- Effective parameter values (guidance, steps, sampler settings)\n"
